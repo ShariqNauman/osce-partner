@@ -1,0 +1,8 @@
+{
+  "name": "OSCE Standardized Patient Simulator",
+  "description": "A professional-grade OSCE training tool where medical students can interact with a Gemini-powered Standardized Patient in real-time. Features a timed 10-minute simulation with an 8-minute time-pressure trigger and a comprehensive evaluation based on clinical rubrics.",
+  "requestFramePermissions": [
+    "microphone",
+    "camera"
+  ]
+}
