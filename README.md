@@ -1,6 +1,4 @@
-# OSCE Partner: Standardized Patient Simulator
-
-![OSCE Partner Banner](https://picsum.photos/seed/medical/1200/400)
+# OSCE Partner
 
 OSCE Partner is a professional-grade training tool designed for medical students to practice **Objective Structured Clinical Examinations (OSCE)**. It leverages the power of Google's Gemini 2.5 Flash Live API to provide a realistic, real-time interaction with a "Standardized Patient" (SP).
 
