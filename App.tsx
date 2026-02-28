@@ -43,12 +43,12 @@ import {
 } from 'lucide-react';
 
 const firebaseConfig = {
-  apiKey: "AIzaSyCPqM7ho69dJD6Fg_lNAnrCTHBQva59ztU",
-  authDomain: "osce-partner-backend.firebaseapp.com",
-  projectId: "osce-partner-backend",
-  storageBucket: "osce-partner-backend.firebasestorage.app",
-  messagingSenderId: "383579391158",
-  appId: "1:383579391158:web:f17ed3d7acd93b712d9217"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
 
 // Initializing Firebase modular SDK correctly outside component to prevent multiple initializations

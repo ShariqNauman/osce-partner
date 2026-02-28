@@ -1,6 +1,6 @@
-# OSCE Partner
+# OSCE Partner: Standardized Patient Simulator
 
-![OSCE display](https://github.com/user-attachments/assets/29cc2051-74df-4925-9d2b-057b75f49e07)
+![OSCE Partner Banner](https://picsum.photos/seed/medical/1200/400)
 
 OSCE Partner is a professional-grade training tool designed for medical students to practice **Objective Structured Clinical Examinations (OSCE)**. It leverages the power of Google's Gemini 2.5 Flash Live API to provide a realistic, real-time interaction with a "Standardized Patient" (SP).
 
@@ -50,6 +50,9 @@ OSCE Partner is a professional-grade training tool designed for medical students
    VITE_FIREBASE_API_KEY=your_firebase_api_key
    VITE_FIREBASE_AUTH_DOMAIN=your_project.firebaseapp.com
    VITE_FIREBASE_PROJECT_ID=your_project_id
+   VITE_FIREBASE_STORAGE_BUCKET=your_project.firebasestorage.app
+   VITE_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
+   VITE_FIREBASE_APP_ID=your_app_id
    ```
 
 4. **Run the development server**
