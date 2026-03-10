@@ -39,7 +39,8 @@ import {
   Mic,
   MicOff,
   Volume2,
-  Waves
+  Waves,
+  AlertCircle
 } from 'lucide-react';
 
 const firebaseConfig = {
@@ -488,9 +489,27 @@ export const App: React.FC = () => {
     }
   };
 
+  const loadUserData = useCallback(async (user: any) => {
+    try {
+      const userDoc = await getDoc(doc(db, 'users', user.uid));
+      const data = userDoc.data();
+      const q = query(collection(db, 'users', user.uid, 'question'), orderBy('createdAt', 'asc'));
+      const historySnap = await getDocs(q);
+      const history: HistoryItem[] = [];
+      historySnap.forEach(doc => {
+        const d = doc.data();
+        history.push({ id: doc.id, caseTitle: d.questionName, score: d.userScore, date: d.createdAt?.toMillis() || Date.now(), summary: d.summary });
+      });
+      setUserData({ name: data?.displayName || 'Student', email: user.email || '', history, repetitionLevel: data?.repetitionLevel || 0 });
+    } catch (error) {
+      console.error("Error loading user data:", error);
+    }
+  }, []);
+
   const handleAuth = async () => {
     if (!emailInput || !passwordInput) return setAuthError('Missing fields');
     setIsAuthLoading(true);
+    setAuthError('');
     try {
       if (authMode === 'signup') {
         const cred = await createUserWithEmailAndPassword(auth, emailInput, passwordInput);
@@ -499,7 +518,12 @@ export const App: React.FC = () => {
         setSimulationState(SimulationState.VERIFICATION_REQUIRED);
       } else {
         const cred = await signInWithEmailAndPassword(auth, emailInput, passwordInput);
-        if (!cred.user.emailVerified) setSimulationState(SimulationState.VERIFICATION_REQUIRED);
+        if (!cred.user.emailVerified) {
+          setSimulationState(SimulationState.VERIFICATION_REQUIRED);
+        } else {
+          setSimulationState(SimulationState.IDLE);
+          await loadUserData(cred.user);
+        }
       }
     } catch (error: any) { setAuthError(error.message); }
     finally { setIsAuthLoading(false); }
@@ -508,22 +532,32 @@ export const App: React.FC = () => {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user && user.emailVerified) {
-        const userDoc = await getDoc(doc(db, 'users', user.uid));
-        const data = userDoc.data();
-        const q = query(collection(db, 'users', user.uid, 'question'), orderBy('createdAt', 'asc'));
-        const historySnap = await getDocs(q);
-        const history: HistoryItem[] = [];
-        historySnap.forEach(doc => {
-          const d = doc.data();
-          history.push({ id: doc.id, caseTitle: d.questionName, score: d.userScore, date: d.createdAt?.toMillis() || Date.now(), summary: d.summary });
-        });
-        setUserData({ name: data?.displayName || 'Student', email: user.email || '', history, repetitionLevel: data?.repetitionLevel || 0 });
+        await loadUserData(user);
       } else { setUserData(null); }
     });
     return () => { unsubscribe(); cleanupSession(); };
-  }, []);
+  }, [loadUserData, cleanupSession]);
 
   if (!userData) {
+    if (simulationState === SimulationState.VERIFICATION_REQUIRED) {
+      return (
+        <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+          <div className="bg-white p-8 rounded-3xl shadow-xl w-full max-w-md border border-slate-200 text-center flex flex-col items-center">
+            <div className="flex justify-center mb-6"><div className="p-4 bg-indigo-600 rounded-2xl text-white shadow-lg"><CheckCircle2 size={40} /></div></div>
+            <h1 className="text-2xl font-black text-center text-slate-900 mb-2">Verify Your Account</h1>
+            <p className="text-slate-500 font-medium mb-6">We've sent a verification email. Please check your inbox and click the link to verify your account.</p>
+            <div className="bg-amber-50 border border-amber-200 text-amber-700 px-4 py-3 rounded-xl mb-8 flex items-start gap-3 text-left w-full">
+               <span className="text-amber-500 mt-0.5"><AlertCircle size={18} /></span>
+               <p className="text-sm font-medium leading-snug">If you don't see the email, please check your <span className="font-bold">spam or junk</span> folder.</p>
+            </div>
+            <button onClick={() => { setSimulationState(SimulationState.IDLE); setAuthMode('login'); }} className="w-full py-4 bg-slate-900 text-white rounded-xl font-black uppercase tracking-widest shadow-lg flex items-center justify-center gap-2">
+               Back to Login <ArrowRight size={18} />
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
         <div className="bg-white p-8 rounded-3xl shadow-xl w-full max-w-md border border-slate-200">
