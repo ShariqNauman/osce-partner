@@ -30,8 +30,8 @@ const ProgressDashboard: React.FC<Props> = ({ userData, onBack, onClear, onResta
 
   return (
     <div className="max-w-4xl mx-auto animate-in fade-in slide-in-from-bottom-8 duration-700">
-      <div className="bg-white rounded-[2.5rem] shadow-2xl border border-slate-200 overflow-hidden mb-8">
-        <div className="bg-slate-900 p-8 text-white flex flex-col md:flex-row md:items-center justify-between gap-6">
+      <div className="bg-white dark:bg-slate-800 rounded-[2.5rem] shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden mb-8 transition-colors duration-300">
+        <div className="bg-slate-900 dark:bg-slate-950 p-8 text-white flex flex-col md:flex-row md:items-center justify-between gap-6 transition-colors duration-300">
           <div className="flex items-center gap-6">
             <div className="w-20 h-20 bg-gradient-to-br from-indigo-400 to-indigo-600 rounded-3xl flex items-center justify-center shadow-2xl rotate-3">
               <User size={40} className="text-white" />
@@ -39,7 +39,7 @@ const ProgressDashboard: React.FC<Props> = ({ userData, onBack, onClear, onResta
             <div>
               <p className="text-indigo-300 font-black uppercase tracking-[0.2em] text-[10px] mb-1">Student Profile</p>
               <h2 className="text-3xl font-black">{userData.name}</h2>
-              <p className="text-slate-400 font-bold text-sm">{userData.history.length} Clinical Encounters Completed</p>
+              <p className="text-slate-400 dark:text-slate-500 font-bold text-sm">{userData.history.length} Clinical Encounters Completed</p>
             </div>
           </div>
           
@@ -67,8 +67,8 @@ const ProgressDashboard: React.FC<Props> = ({ userData, onBack, onClear, onResta
 
         <div className="p-8">
           <div className="flex items-center justify-between mb-6">
-            <h3 className="text-xl font-black text-slate-900 flex items-center gap-2 uppercase tracking-tight">
-              <BarChart3 className="text-indigo-600" size={20} /> Performance Log
+            <h3 className="text-xl font-black text-slate-900 dark:text-white flex items-center gap-2 uppercase tracking-tight">
+              <BarChart3 className="text-indigo-600 dark:text-indigo-400" size={20} /> Performance Log
             </h3>
             {userData.history.length > 0 && (
               <button 
@@ -82,26 +82,26 @@ const ProgressDashboard: React.FC<Props> = ({ userData, onBack, onClear, onResta
 
           <div className="space-y-4">
             {userData.history.length === 0 ? (
-              <div className="text-center py-20 border-2 border-dashed border-slate-100 rounded-[2rem]">
-                <Calendar className="mx-auto text-slate-200 mb-4" size={48} />
-                <p className="text-slate-400 font-bold italic">No simulation history found. Start your first case to see analytics.</p>
+              <div className="text-center py-20 border-2 border-dashed border-slate-100 dark:border-slate-700 rounded-[2rem]">
+                <Calendar className="mx-auto text-slate-200 dark:text-slate-600 mb-4" size={48} />
+                <p className="text-slate-400 dark:text-slate-500 font-bold italic">No simulation history found. Start your first case to see analytics.</p>
               </div>
             ) : (
               [...userData.history].reverse().map((item, index) => {
                 const isLatest = index === 0;
                 return (
                   <div key={item.id} className="flex flex-col gap-2">
-                    <div className="group p-5 bg-slate-50 hover:bg-white rounded-2xl border border-transparent hover:border-slate-200 hover:shadow-xl transition-all duration-300 flex items-center justify-between">
+                    <div className="group p-5 bg-slate-50 dark:bg-slate-700 hover:bg-white dark:hover:bg-slate-600 rounded-2xl border border-transparent hover:border-slate-200 dark:hover:border-slate-500 hover:shadow-xl transition-all duration-300 flex items-center justify-between">
                       <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 bg-white rounded-xl border border-slate-200 flex items-center justify-center text-slate-400 group-hover:bg-indigo-50 group-hover:text-indigo-600 group-hover:border-indigo-100 transition-colors shadow-sm">
+                        <div className="w-12 h-12 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-600 flex items-center justify-center text-slate-400 dark:text-slate-500 group-hover:bg-indigo-50 dark:group-hover:bg-indigo-900 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 group-hover:border-indigo-100 dark:group-hover:border-indigo-800 transition-colors shadow-sm">
                           <Clock size={24} />
                         </div>
                         <div>
-                          <h4 className="font-black text-slate-800 leading-none mb-1">{item.caseTitle}</h4>
+                          <h4 className="font-black text-slate-800 dark:text-slate-100 leading-none mb-1">{item.caseTitle}</h4>
                           {item.actualDiagnosis && (
-                            <p className="text-[10px] font-black text-indigo-500 uppercase tracking-tight mb-1.5">{item.actualDiagnosis}</p>
+                            <p className="text-[10px] font-black text-indigo-500 tracking-tight mb-1.5">{item.actualDiagnosis}</p>
                           )}
-                          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-2">
+                          <p className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase tracking-wider flex items-center gap-2">
                             {new Date(item.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
                           </p>
                         </div>
@@ -155,7 +155,7 @@ const ProgressDashboard: React.FC<Props> = ({ userData, onBack, onClear, onResta
       <div className="flex justify-center">
         <button
           onClick={onBack}
-          className="flex items-center gap-3 px-10 py-4 bg-slate-900 hover:bg-black text-white font-black uppercase tracking-widest rounded-2xl transition-all shadow-2xl hover:scale-105 active:scale-95 group"
+          className="flex items-center gap-3 px-10 py-4 bg-slate-900 border border-transparent dark:border-slate-700 hover:bg-black text-white font-black uppercase tracking-widest rounded-2xl transition-all shadow-2xl hover:scale-105 active:scale-95 group"
         >
           <div className="group-hover:-translate-x-1 transition-transform">
             <ArrowLeft size={20} />
