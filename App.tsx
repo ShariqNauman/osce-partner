@@ -75,7 +75,8 @@ export const App: React.FC = () => {
   const [consultationHistory, setConsultationHistory] = useState<TranscriptionItem[]>([]);
   const [evaluation, setEvaluation] = useState<EvaluationResult | null>(null);
   const [currentCase, setCurrentCase] = useState<CaseBrief | null>(null);
-  const [isMuted, setIsMuted] = useState(false);
+  const [isMuted, setIsMuted] = useState(true); // Default to muted for push-to-talk
+  const isMutedRef = useRef(true); 
   const [notes, setNotes] = useState('');
   const [showScenario, setShowScenario] = useState(true);
 
@@ -230,6 +231,49 @@ export const App: React.FC = () => {
     }
   }, [simulationState, handPos, currentCase]);
 
+  // Push-to-Talk Logic
+  useEffect(() => {
+    isMutedRef.current = isMuted;
+  }, [isMuted]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && (simulationState === SimulationState.RUNNING || simulationState === SimulationState.EXAMINATION || simulationState === SimulationState.VIVA)) {
+         if (document.activeElement?.tagName === 'TEXTAREA' || document.activeElement?.tagName === 'INPUT') return;
+         e.preventDefault();
+         if (isMuted) setIsMuted(false);
+      }
+    };
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+         if (document.activeElement?.tagName === 'TEXTAREA' || document.activeElement?.tagName === 'INPUT') return;
+         e.preventDefault();
+         if (!isMuted) {
+           setIsMuted(true);
+           // Immediately signal to Gemini that the user has finishing speaking to eliminate silence-padding delay
+           sessionPromiseRef.current?.then(session => {
+              if (session) {
+                try {
+                  session.send({ clientContent: { turnComplete: true } });
+                } catch (err) {
+                  console.error("Failed to send turnComplete flag", err);
+                }
+              }
+           });
+         }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown, { passive: false });
+    window.addEventListener('keyup', handleKeyUp, { passive: false });
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, [simulationState, isMuted]);
+
+
+
   useEffect(() => {
     if (simulationState === SimulationState.EXAMINATION) {
       const initMediPipe = async () => {
@@ -311,7 +355,7 @@ export const App: React.FC = () => {
       const imageResponse = await ai.models.generateContent({
         model: 'gemini-2.5-flash-image',
         contents: {
-          parts: [{ text: "A high-quality, realistic medical clinical photograph of a real human's bare chest, directly front-facing view. Clear lighting, neutral professional medical training style. No medical equipment, no tubes, no electrodes, no background clutter. Focused exclusively on a frontal view of the human torso." }]
+          parts: [{ text: "A high-quality, realistic medical clinical photograph of a 58-year-old Asian man's torso and face, directly front-facing view. Clear lighting, neutral professional medical training style. He has a slight yellow tint to his skin (jaundice). No medical equipment, no tubes, no background clutter. Focused on a frontal view for abdominal examination." }]
         },
         config: {
           imageConfig: { aspectRatio: "3:4" }
@@ -371,7 +415,7 @@ export const App: React.FC = () => {
           const processor = inputCtx.createScriptProcessor(4096, 1, 1);
           
           processor.onaudioprocess = (e) => {
-            if (isMuted || sessionIdRef.current !== currentSimSessionId) return;
+            if (isMutedRef.current || sessionIdRef.current !== currentSimSessionId) return;
             const input = e.inputBuffer.getChannelData(0);
             const int16 = new Int16Array(input.length);
             for (let i = 0; i < input.length; i++) int16[i] = input[i] * 32768;
@@ -412,18 +456,95 @@ export const App: React.FC = () => {
             source.onended = () => sourcesRef.current.delete(source);
           }
 
+          const hasThaiChars = (str: string) => /[\u0E00-\u0E7F]/.test(str);
+          const isEnglishOnly = (str: string) => /^[a-zA-Z0-9\s.,?':!-\[\]*]+$/.test(str.trim());
+          const isBasicEnglishWhitelist = (str: string) => {
+            const normalized = str.toLowerCase().replace(/[^a-z]/g, '');
+            return ['hello', 'hi', 'ok', 'okay', 'yes', 'no', 'bye', 'byebye'].includes(normalized);
+          };
+          
           if (message.serverContent?.inputTranscription) {
             const text = message.serverContent.inputTranscription.text;
-            if (/^[a-zA-Z0-9\s.,?':!-]+$/.test(text)) {
-              currentInputTranscriptionRef.current += text;
-              updateTranscription('user', currentInputTranscriptionRef.current);
+            if (text.trim().length > 0) {
+              // Strict Language Filter
+              const isThai = hasThaiChars(text);
+              const passesEnglish = isEnglishOnly(text);
+              const passesBasicEnglish = isBasicEnglishWhitelist(text);
+              
+              if ((language === 'th' && (isThai || passesBasicEnglish)) || (language === 'en' && passesEnglish)) {
+                currentInputTranscriptionRef.current += text;
+                updateTranscription('user', currentInputTranscriptionRef.current);
+              }
             }
           }
           if (message.serverContent?.outputTranscription) {
-            currentOutputTranscriptionRef.current += message.serverContent.outputTranscription.text;
-            updateTranscription(isViva ? 'examiner' : 'patient', currentOutputTranscriptionRef.current);
+            const text = message.serverContent.outputTranscription.text;
+            
+            // Strict Language Filter
+            const isThai = hasThaiChars(text);
+            const passesEnglish = isEnglishOnly(text);
+            const passesBasicEnglish = isBasicEnglishWhitelist(text);
+            
+            if ((language === 'th' && (isThai || passesBasicEnglish)) || (language === 'en' && passesEnglish)) {
+               currentOutputTranscriptionRef.current += text;
+               updateTranscription(isViva ? 'examiner' : 'patient', currentOutputTranscriptionRef.current);
+            }
           }
           if (message.serverContent?.turnComplete) {
+            if (language === 'th') {
+              const inText = currentInputTranscriptionRef.current.replace(/\[.*?\]|\*.*?\*/g, '').trim();
+              const outText = currentOutputTranscriptionRef.current.replace(/\[.*?\]|\*.*?\*/g, '').trim();
+              
+              const translateTranscription = async (text: string, trackRole: string) => {
+                if (!text) return;
+
+                // Static translation map for the "Yellow Jaundice" scripted lines
+                const staticTranslations: Record<string, string> = {
+                  "ไม่ดีเลยครับหมอ ตัวเหลือง ตาเหลืองมา 3 สัปดาห์แล้ว": "Not good, Doctor. My skin and eyes have been yellow for 3 weeks.",
+                  "ครับ มันจุกแน่นที่ท้องด้านขวา... แล้วน้ำหนักก็ลดลงเยอะมาก": "Yes, it's a tight/dull ache in my right side... and I've lost a lot of weight.",
+                  "ผมเป็นคนขอนแก่นครับ ชอบกินปลาร้าดิบมาตั้งแต่เด็ก": "I'm from Khon Kaen. I've loved eating raw fermented fish (Pla Ra) since I was a kid."
+                };
+
+                // Check static map first for instant translation
+                let translation = "";
+                for (const thaiPhrase in staticTranslations) {
+                   if (text.includes(thaiPhrase) || thaiPhrase.includes(text)) {
+                      translation = staticTranslations[thaiPhrase];
+                      break;
+                   }
+                }
+
+                if (!translation) {
+                  try {
+                    const ai = new GoogleGenAI({ apiKey: import.meta.env.GEMINI_API_KEY });
+                    const response = await ai.models.generateContent({
+                      model: 'gemini-3-pro-preview',
+                      contents: `Translate the following Thai medical consultation transcription into English. ONLY provide the English translation, without any explanations, quotes, or extra text.\n\nTranscription:\n${text}`,
+                    });
+                    translation = response.text || '';
+                  } catch (e) {
+                    console.error('Translation error:', e);
+                  }
+                }
+
+                if (translation.trim()) {
+                  setTranscription(prev => {
+                    const updated = [...prev];
+                    for (let i = updated.length - 1; i >= 0; i--) {
+                      if (updated[i].role === trackRole && !updated[i].englishTranslation) {
+                         updated[i] = { ...updated[i], englishTranslation: translation.trim() };
+                         break;
+                      }
+                    }
+                    return updated;
+                  });
+                }
+              };
+
+              if (inText) translateTranscription(inText, 'user');
+              if (outText) translateTranscription(outText, isViva ? 'examiner' : 'patient');
+            }
+
             currentInputTranscriptionRef.current = '';
             currentOutputTranscriptionRef.current = '';
           }
@@ -464,14 +585,14 @@ export const App: React.FC = () => {
     if (!filteredText) return;
     
     setTranscription(prev => {
-      if (prev.length === 0) return [{ role, text: filteredText, timestamp: Date.now() }];
+      if (prev.length === 0) return [{ id: Date.now().toString() + Math.random().toString(36).substr(2, 5), role, text: filteredText, timestamp: Date.now() }];
       const last = prev[prev.length - 1];
-      if (last.role === role && Date.now() - last.timestamp < 10000) {
+      if (last.role === role && Date.now() - last.timestamp < 10000 && !last.englishTranslation) {
         const updated = [...prev];
         updated[updated.length - 1] = { ...last, text: filteredText };
         return updated;
       }
-      return [...prev, { role, text: filteredText, timestamp: Date.now() }];
+      return [...prev, { id: Date.now().toString() + Math.random().toString(36).substr(2, 5), role, text: filteredText, timestamp: Date.now() }];
     });
   };
 
@@ -515,7 +636,7 @@ export const App: React.FC = () => {
 
         // 1. Add history doc
         const newHistoryDocRef = await addDoc(collection(db, 'users', auth.currentUser.uid, 'question'), {
-          questionName: currentCase?.title || 'Cardiovascular Case',
+          questionName: currentCase?.title || 'Medical Case',
           userScore: result.totalScore,
           summary: result.summary,
           createdAt: serverTimestamp()
@@ -534,7 +655,7 @@ export const App: React.FC = () => {
               ...prev.history,
               {
                 id: newHistoryDocRef.id,
-                caseTitle: currentCase?.title || 'Cardiovascular Case',
+                caseTitle: currentCase?.title || 'Medical Case',
                 score: result.totalScore,
                 date: Date.now(),
                 summary: result.summary
@@ -675,20 +796,20 @@ export const App: React.FC = () => {
         <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
           <div 
             className="flex items-center gap-3 cursor-pointer group" 
-            onClick={() => setSimulationState(SimulationState.IDLE)}
+            onClick={() => { cleanupSession(); stopAudio(); setSimulationState(SimulationState.IDLE); }}
           >
             <div className="p-2.5 bg-indigo-600 rounded-xl text-white shadow-lg rotate-3 group-hover:rotate-6 transition-transform"><Heart size={24} /></div>
             <div><h1 className="text-xl font-black tracking-tight text-slate-900 dark:text-white">{t.oscepartner}</h1><p className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">{t.clinicalSimulation}</p></div>
           </div>
           <div className="flex items-center gap-4">
-            <button onClick={() => setSimulationState(SimulationState.SETTINGS)} className="p-3 rounded-xl transition-all text-slate-500 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-700" title={t.settings}><Settings size={20} /></button>
-            <button onClick={() => setSimulationState(SimulationState.SUBSCRIPTION)} className="p-3 rounded-xl transition-all flex items-center gap-2 font-black uppercase tracking-widest text-[10px] text-slate-500 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-700"><CreditCard size={18} /> {t.upgrade}</button>
-            <button onClick={() => setSimulationState(SimulationState.DASHBOARD)} className="p-3 rounded-xl transition-all text-slate-500 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-700"><BarChart size={22} /></button>
+            <button onClick={() => { cleanupSession(); stopAudio(); setSimulationState(SimulationState.SETTINGS); }} className="p-3 rounded-xl transition-all text-slate-500 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-700" title={t.settings}><Settings size={20} /></button>
+            <button onClick={() => { cleanupSession(); stopAudio(); setSimulationState(SimulationState.SUBSCRIPTION); }} className="p-3 rounded-xl transition-all flex items-center gap-2 font-black uppercase tracking-widest text-[10px] text-slate-500 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-700"><CreditCard size={18} /> {t.upgrade}</button>
+            <button onClick={() => { cleanupSession(); stopAudio(); setSimulationState(SimulationState.DASHBOARD); }} className="p-3 rounded-xl transition-all text-slate-500 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-700"><BarChart size={22} /></button>
             <div className="h-8 w-px bg-slate-200 dark:bg-slate-700 mx-1" />
             <div className="flex items-center gap-3 bg-slate-50 dark:bg-slate-800/50 p-1.5 pr-4 rounded-2xl border border-slate-100 dark:border-slate-700 transition-colors duration-300">
               <div className="w-9 h-9 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl flex items-center justify-center text-indigo-600 dark:text-indigo-400"><User size={20} /></div>
               <div className="hidden sm:block"><p className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">{t.student}</p><p className="text-xs font-bold text-slate-700 dark:text-slate-300">{userData.name}</p></div>
-              <button onClick={() => { signOut(auth); setUserData(null); }} className="ml-2 text-slate-400 hover:text-rose-500 dark:hover:text-rose-400"><LogOut size={16} /></button>
+              <button onClick={() => { cleanupSession(); stopAudio(); signOut(auth); setUserData(null); }} className="ml-2 text-slate-400 hover:text-rose-500 dark:hover:text-rose-400"><LogOut size={16} /></button>
             </div>
           </div>
         </div>
@@ -755,16 +876,34 @@ export const App: React.FC = () => {
                   <div className="flex items-center gap-4"><Clock size={20} className="text-indigo-400" /><p className="font-mono text-2xl font-bold">{formatTime(timer)}</p></div>
                   <button onClick={() => setIsMuted(!isMuted)} className={`p-3 rounded-xl transition-all border-2 ${isMuted ? 'bg-rose-50 dark:bg-rose-500/10 text-rose-500 border-rose-100 dark:border-rose-500/20' : 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-500 border-emerald-100 dark:border-emerald-500/20'}`}>{isMuted ? <MicOff size={24} /> : <Mic size={24} />}</button>
                 </div>
-                <div className="flex-1 p-10 flex flex-col items-center justify-center bg-slate-50/50 dark:bg-slate-800 text-center">
-                  <div className="mb-6 p-8 bg-white dark:bg-slate-700 rounded-full shadow-xl relative border-2 border-indigo-50 dark:border-slate-600">
-                    <div className="absolute inset-0 bg-indigo-500/10 dark:bg-indigo-500/20 rounded-full animate-ping" />
-                    <Waves size={64} className="text-indigo-600 dark:text-indigo-400 relative z-10" />
-                  </div>
-                  <h3 className="text-2xl font-black text-slate-900 dark:text-white mb-2">{t.liveAudioSession}</h3>
-                  <p className="text-slate-500 dark:text-slate-400 font-bold max-w-xs mx-auto">{t.activeListeningMode} {currentCase.patientName} {t.toBeginHistoryTaking}</p>
-                  <div className="mt-8 flex items-center gap-3 px-4 py-2 bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 rounded-full text-[10px] font-black uppercase tracking-widest border border-indigo-200 dark:border-indigo-800">
-                    <Volume2 size={14} /> {t.realtimeResponseActive}
-                  </div>
+                <div className="flex-1 p-6 flex flex-col bg-slate-50/50 dark:bg-slate-800 overflow-y-auto">
+                    {transcription.length === 0 ? (
+                      <div className="m-auto flex flex-col items-center text-center">
+                        <div className="mb-6 p-8 bg-white dark:bg-slate-700 rounded-full shadow-xl relative border-2 border-indigo-50 dark:border-slate-600">
+                          <div className={`absolute inset-0 rounded-full ${isMuted ? '' : 'bg-indigo-500/10 dark:bg-indigo-500/20 animate-ping'}`} />
+                          <Waves size={64} className={`${isMuted ? 'text-slate-300 dark:text-slate-600' : 'text-indigo-600 dark:text-indigo-400'} relative z-10 transition-colors`} />
+                        </div>
+                        <h3 className="text-2xl font-black text-slate-900 dark:text-white mb-2">{t.liveAudioSession}</h3>
+                        <p className="text-slate-500 dark:text-slate-400 font-bold max-w-xs mx-auto">{t.activeListeningMode} {currentCase.patientName} {t.toBeginHistoryTaking}</p>
+                        <div className={`mt-8 flex items-center gap-3 px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest border transition-colors ${isMuted ? 'bg-rose-100 dark:bg-rose-900/50 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-800' : 'bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800'}`}>
+                          {isMuted ? <MicOff size={14} /> : <Volume2 size={14} />} 
+                          {isMuted ? "Hold SPACE to Speak" : t.realtimeResponseActive}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-4 flex flex-col pb-4 h-full">
+                        {transcription.map((item) => (
+                           <div key={item.id} className={`flex w-full ${item.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                              <div className={`max-w-[85%] p-4 rounded-[2rem] shadow-sm ${item.role === 'user' ? 'bg-indigo-600 text-white rounded-br-md text-right' : 'bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 rounded-bl-md border border-slate-100 dark:border-slate-600 text-left'}`}>
+                                 <p className="font-medium leading-relaxed">{item.text}</p>
+                                 {item.englishTranslation && (
+                                   <p className="text-sm mt-3 pt-3 opacity-90 border-t font-semibold tracking-wide border-current/20">{item.englishTranslation}</p>
+                                 )}
+                              </div>
+                           </div>
+                        ))}
+                      </div>
+                    )}
                 </div>
                 <div className="p-8 border-t border-slate-100 dark:border-slate-700 bg-white dark:bg-slate-800 flex justify-end gap-4 shadow-inner">
                   <button onClick={startExamMode} className="px-10 py-5 bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-widest rounded-2xl flex items-center gap-3 shadow-xl transition-all hover:scale-105 group">{t.physicalExam} <ScanFace size={24} className="group-hover:scale-110 transition-transform" /></button>
@@ -812,9 +951,26 @@ export const App: React.FC = () => {
                 <div className="space-y-8 flex flex-col">
                    <div className="bg-white dark:bg-slate-800 rounded-[2.5rem] shadow-2xl border border-slate-200 dark:border-slate-700 p-8 flex-1 flex flex-col overflow-hidden">
                       <h4 className="font-black uppercase tracking-widest text-[10px] text-slate-400 dark:text-slate-500 mb-6 flex items-center gap-2 border-b border-slate-100 dark:border-slate-700 pb-3"><MessageSquare size={16} /> {t.clinicalStatus}</h4>
-                      <div className="flex-1 flex flex-col items-center justify-center text-center p-6 bg-slate-50/50 dark:bg-slate-900/50 rounded-3xl border-2 border-dashed border-slate-100 dark:border-slate-700 mb-6">
-                        <Waves size={32} className="text-indigo-300 dark:text-indigo-500 mb-4 animate-pulse" />
-                        <p className="text-xs font-bold text-slate-500 dark:text-slate-400 italic">{t.listeningForVerbal}</p>
+                      <div className="flex-1 p-4 flex flex-col overflow-y-auto bg-slate-50/50 dark:bg-slate-900/50 rounded-3xl border-2 border-slate-100 dark:border-slate-700 mb-6">
+                          {transcription.length === 0 ? (
+                            <div className="m-auto flex flex-col items-center text-center">
+                              <Waves size={32} className="text-indigo-300 dark:text-indigo-500 mb-4 animate-pulse" />
+                              <p className="text-xs font-bold text-slate-500 dark:text-slate-400 italic">{t.listeningForVerbal}</p>
+                            </div>
+                          ) : (
+                            <div className="space-y-3 flex flex-col pb-2">
+                              {transcription.map((item) => (
+                                <div key={item.id} className={`flex w-full ${item.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                  <div className={`max-w-[90%] p-3 rounded-2xl shadow-sm text-sm ${item.role === 'user' ? 'bg-indigo-600 text-white rounded-br-md text-right' : 'bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 rounded-bl-md border border-slate-100 dark:border-slate-600 text-left'}`}>
+                                    <p className="font-medium">{item.text}</p>
+                                    {item.englishTranslation && (
+                                      <p className="text-xs mt-2 pt-2 opacity-90 border-t border-current/20">{item.englishTranslation}</p>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                       </div>
                       <div className="flex items-center gap-4 mb-6 justify-center">
                         <button onClick={() => setIsMuted(!isMuted)} className={`p-6 rounded-[2rem] border-2 transition-all shadow-xl hover:scale-105 active:scale-95 ${isMuted ? 'bg-rose-500 border-rose-400 text-white' : 'bg-emerald-500 border-emerald-400 text-white'}`}>{isMuted ? <MicOff size={32} /> : <Mic size={32} />}</button>
@@ -837,18 +993,38 @@ export const App: React.FC = () => {
                  <div className="bg-slate-900 dark:bg-slate-950 px-8 py-4 rounded-2xl text-white font-mono text-2xl font-bold flex items-center gap-4 shadow-xl shadow-slate-200 dark:shadow-none"><Clock size={22} className="text-indigo-400" /> {formatTime(timer)}</div>
                </div>
                <div className="grid grid-cols-1 lg:grid-cols-5 gap-12">
-                  <div className="lg:col-span-2 flex flex-col items-center justify-center bg-slate-900 rounded-[3rem] p-12 text-center shadow-inner relative overflow-hidden group min-h-[500px]">
+                  <div className="lg:col-span-2 flex flex-col bg-slate-900 rounded-[3rem] p-8 text-center shadow-inner relative overflow-hidden group min-h-[500px]">
                     <div className="absolute inset-0 bg-indigo-500/5 group-hover:bg-indigo-500/10 transition-colors" />
-                    <div className="relative z-10">
-                      <div className="mb-8 p-10 bg-white/5 rounded-full border border-white/10 backdrop-blur-sm shadow-2xl mx-auto inline-flex">
-                        <Waves size={80} className="text-indigo-400 animate-pulse" />
+                    <div className="relative z-10 flex-shrink-0 mb-6">
+                      <div className="p-8 bg-white/5 rounded-full border border-white/10 backdrop-blur-sm shadow-2xl mx-auto inline-flex">
+                        <Waves size={64} className="text-indigo-400 animate-pulse" />
                       </div>
-                      <h3 className="text-3xl font-black text-white mb-4">{t.examinerPresence}</h3>
-                      <p className="text-slate-400 font-bold max-w-xs mx-auto leading-relaxed">{t.verbalResponseSession}</p>
-                      <div className="mt-8 flex items-center justify-center gap-2 px-6 py-3 bg-white/5 rounded-2xl border border-white/10">
+                      <h3 className="text-2xl font-black text-white mt-4 mb-2">{t.examinerPresence}</h3>
+                      <div className="flex items-center justify-center gap-2 px-6 py-2 bg-white/5 rounded-2xl border border-white/10 w-max mx-auto">
                          <div className="w-2 h-2 bg-emerald-400 rounded-full animate-ping" />
                          <span className="text-[10px] font-black uppercase tracking-widest text-indigo-300">{t.liveFeedbackMonitoring}</span>
                       </div>
+                    </div>
+                    
+                    <div className="flex-1 overflow-y-auto bg-slate-800/50 rounded-[2rem] p-4 relative z-10 border border-white/5 custom-scrollbar">
+                        {transcription.length === 0 ? (
+                            <div className="h-full flex flex-col items-center justify-center">
+                                <p className="text-slate-400 font-bold max-w-xs mx-auto leading-relaxed text-sm">{t.verbalResponseSession}</p>
+                            </div>
+                        ) : (
+                            <div className="space-y-3 flex flex-col">
+                                {transcription.map((item) => (
+                                    <div key={item.id} className={`flex w-full ${item.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                        <div className={`max-w-[90%] p-3 rounded-2xl shadow-sm text-sm ${item.role === 'user' ? 'bg-indigo-600 text-white rounded-br-md text-right' : 'bg-slate-700 text-white rounded-bl-md border border-slate-600 text-left'}`}>
+                                            <p className="font-medium">{item.text}</p>
+                                            {item.englishTranslation && (
+                                                <p className="text-xs mt-2 pt-2 opacity-90 border-t border-white/20">{item.englishTranslation}</p>
+                                            )}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
                   </div>
                   <div className="lg:col-span-3 space-y-8">

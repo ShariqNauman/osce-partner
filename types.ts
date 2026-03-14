@@ -69,8 +69,10 @@ export interface EvaluationResult {
 }
 
 export interface TranscriptionItem {
+  id: string;
   role: 'user' | 'patient' | 'examiner';
   text: string;
+  englishTranslation?: string;
   timestamp: number;
 }
 

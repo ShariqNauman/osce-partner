@@ -27,37 +27,43 @@ export const FIXED_CHEST_IMAGE = "https://images.unsplash.com/photo-157915423582
 export const CASE_GENERATOR_PROMPT = (lang: 'en' | 'th' = 'en') => {
   const langName = lang === 'th' ? 'Thai' : 'English';
   return `
-Generate a professional OSCE medical case strictly based on the 2021 Malaysian Clinical Practice Guidelines for Management of Non-ST Elevation Myocardial Infarction (NSTE-ACS).
-THE PATIENT: Mr. Tan Ah Kok, 70 years old (701021-10-1991), plumber, experiencing central chest pain for 2 hours.
+Generate a professional OSCE medical case strictly based on the following patient profile.
+THE PATIENT: Mr. Somchai, 58 years old, Male, IC: 680412-10-5533.
+Setting: A GP clinic in the UK (the patient is a Thai expat) or a city hospital in Bangkok.
 
-ALL text content in the JSON output MUST be in ${langName}.
+ALL text content in the JSON output MUST be in ${langName} except the exact JSON keys.
 
-# CLINICAL REQUIREMENTS (Based on NSTE-ACS CPG 2021):
-- Diagnosis: Differentiation between UA and NSTEMI based on cardiac troponins (rise/fall).
-- Initial Meds: 300mg Aspirin loading (chewed), P2Y12 inhibitors (Clopidogrel/Ticagrelor early).
-- Oxygen: Only if SpO2 < 95%.
-- Pain relief: GTN (sublingual/spray), then IV Morphine/Fentanyl if unrelieved.
-- Anticoagulation: UFH/LMWH/Fondaparinux (Fondaparinux preferred for medical management).
-- Risk Stratification: Use of HEART/GRACE/TIMI scores to determine invasive strategy timing.
+# CLINICAL REQUIREMENTS (The "Yellow Jaundice" of the Northeast):
+- Chief Complaint: Yellowing of the eyes (jaundice) and dull pain in the upper right stomach for 3 weeks.
+- The Hook: If asked about pain, say it's a "heavy, dull ache" in the right side, NOT sharp.
+- The Secret (Only reveal if asked about diet or origin): "I grew up in Khon Kaen (Northeast Thailand). I love traditional food. I still eat Pla Ra (raw fermented fish) that my sister sends me from home. I've eaten it raw since I was a little boy."
+- Other Symptoms: "My urine is very dark, like Coca-Cola, and my poo is pale, almost like clay."
+- Weight: "I've lost about 8kg in two months without trying."
+- Physical Exam Hotspots (If the doctor specifically performs a physical exam by looking or touching these areas, provide these findings):
+  1. Eyes (Sclera): Deep Yellow tint (Scleral icterus).
+  2. Right Upper Quadrant: Firm, non-tender mass felt 3cm below the ribs (Hepatomegaly / Courvoisier's Sign).
+  3. Left Supraclavicular Notch: Small, hard, pea-sized lump (Virchow's Node).
+  4. Hands (Palms): Scratch marks (Excoriations due to intense itching).
+
+# VIVA QUESTION RULES:
+You MUST output EXACTLY these 4 questions (translated to ${langName}):
+1. What is your leading diagnosis?
+2. Why did you ask about his hometown/diet?
+3. What specific parasite is responsible?
+4. What is the first-line imaging you would order?
 
 Return ONLY a RAW JSON object. DO NOT include markdown formatting or extra text.
-# VIVA QUESTION RULES:
-1. DO NOT mention "NSTE-ACS", "Unstable Angina", or "NSTEMI" in the questions.
-2. DO NOT reveal that the 2021 Malaysian CPG is being used.
-3. Keep questions open-ended to test clinical reasoning.
-4. ALL text content MUST be in ${langName}.
-
 {
-  "title": "Mr. Tan Ah Kok - Cardiovascular Case",
-  "patientName": "Tan Ah Kok",
-  "patientAge": "70",
+  "title": "Mr. Somchai - The 'Yellow Jaundice' of the Northeast",
+  "patientName": "Mr. Somchai",
+  "patientAge": "58",
   "gender": "Male",
-  "icNumber": "701021-10-1991",
-  "personaName": "Mr. Tan",
-  "chiefComplaint": "Crushing central chest pain",
+  "icNumber": "680412-10-5533",
+  "personaName": "Mr. Somchai",
+  "chiefComplaint": "Yellowing of the eyes (jaundice) and dull pain in the upper right stomach for 3 weeks.",
   "briefingText": "...(in ${langName})",
-  "systemInstruction": "...(in ${langName})",
-  "vivaQuestions": ["...(in ${langName})"]
+  "systemInstruction": "You are Mr. Somchai, 58 years old. Tone: Tired, a bit anxious, but stoic. ... (Include instructions for The Hook, The Secret, Other Symptoms, Weight loss, and EXACTLY what to say if the doctor touches/examines the 4 Physical Exam hotspots) ... ALL in ${langName}",
+  "vivaQuestions": ["...(The 4 exact Viva questions translated to ${langName})"]
 }
 `;
 };
@@ -66,14 +72,14 @@ export const EXAMINER_INSTRUCTION = (caseTitle: string, questions: string[], lan
   const langName = lang === 'th' ? 'Thai' : 'English';
   return `
 # IDENTITY
-You are a professional Cardiovascular Clinical Examiner for: "${caseTitle}".
+You are a professional Medical Clinical Examiner for: "${caseTitle}".
 
 # CONDUCT
 - STRICT LANGUAGE MODE: Speak ONLY ${langName}.
-- DO NOT reveal the diagnosis ("NSTEMI/UA") or the specific guideline name ("2021 NSTE-ACS CPG") to the student.
+- DO NOT reveal the correct diagnosis (Cholangiocarcinoma via Opisthorchis viverrini) to the student prematurely.
 - NATURAL INTERACTION: Acknowledge greetings politely.
-- SKIP RULE: If the student says "I don't know", "skip", or "not sure", acknowledge neutrally (e.g., 'Understood, let's move to the next question') and ask the next question immediately.
-- Transition once the student gives a satisfactory clinical answer or asks to skip.
+- SKIP RULE: If the student says "I don't know", "skip", or "not sure", acknowledge neutrally and ask the next question immediately.
+- Transition once the student gives a satisfactory clinical answer or asks to skip. The correct answers for reference: 1. Cholangiocarcinoma (Bile Duct Cancer) 2. Northeast Thailand is a hotspot for liver flukes in raw fermented fish (Pla Ra). 3. Opisthorchis viverrini. 4. Abdominal Ultrasound.
 - Conclusion: Once all questions are finished, say: ${lang === 'th' ? '"ขอบคุณครับ/ค่ะ การสอบปากเปล่าเสร็จสิ้นแล้ว"' : '"Thank you, that concludes the Viva session."'}
 `;
 };
@@ -82,8 +88,8 @@ export const EVALUATION_PROMPT = (history: string, caseTitle: string, vivaQuesti
   const langName = lang === 'th' ? 'Thai' : 'English';
   return `
 # TASK
-Evaluate the MEDICAL STUDENT'S performance in this Cardiovascular OSCE: "${caseTitle}".
-Use the 2021 Malaysian NSTE-ACS CPG as the gold standard for management and diagnosis.
+Evaluate the MEDICAL STUDENT'S performance in this OSCE: "${caseTitle}".
+The Gold Standard Diagnosis is: Cholangiocarcinoma (Bile Duct Cancer) secondary to chronic Opisthorchis viverrini (Southeast Asian Liver Fluke) infection.
 
 ALL feedback text in the JSON output MUST be in ${langName}.
 
@@ -91,29 +97,29 @@ ALL feedback text in the JSON output MUST be in ${langName}.
 ${history}
 
 # RUBRIC & SCORING (Out of 100)
-1. Diagnosis Accuracy & Reasoning (0-25): Testing differentiation logic (troponins).
-2. Problem-Solving & Clinical Logic (0-25): Checking risk stratification (HEART/GRACE) and revascularization timing (24h/72h).
-3. Communication & Rapport (0-25): Evaluates how the student handled the patient's high anxiety and acute distress.
-4. Clinical Skills (0-25): Targeted history (SOCRATES) and correct dosing (300mg Aspirin).
+1. Diagnosis Accuracy & Reasoning (0-25): Must distinguish from Gallstones. Gallstones cause sharp colicky pain after eating fat. This patient has painless/dull jaundice and weight loss (malignancy).
+2. Problem-Solving & Clinical Logic (0-25): Checking if they ordered Abdominal Ultrasound first-line.
+3. Communication & Rapport (0-25): Evaluates how they gathered the diet/hometown history and their empathy.
+4. Clinical Skills (0-25): Did they discover the "Pla Ra" (raw fermented fish) / Khon Kaen history? If they failed to ask about fermented fish/diet/hometown, penalize heavily here, and include "Correct Answer" feedback specifically pointing out that the Pla Ra history is the smoking gun for liver flukes.
 
 # OUTPUT FORMAT
 Return ONLY a RAW JSON object. ALL text values MUST be in ${langName}.
 {
-  "actualDiagnosis": "NSTE-ACS (Specifically NSTEMI)",
-  "diagnosis": "Feedback on diagnostic reasoning...",
+  "actualDiagnosis": "Cholangiocarcinoma secondary to Opisthorchis viverrini",
+  "diagnosis": "Feedback on diagnostic reasoning. Did they correctly differentiate from Gallstones? ...(in ${langName})",
   "diagnosisGrade": "Excellent | Proficient | Average | Poor",
   "diagnosisScore": number,
-  "problemSolving": "Feedback on management timing and risk scores...",
+  "problemSolving": "Feedback on imaging choice and logic (Ultrasound first-line) ...(in ${langName})",
   "problemSolvingGrade": "Excellent | Proficient | Average | Poor",
   "problemSolvingScore": number,
-  "communication": "Feedback on empathy and handling the patient's panic...",
+  "communication": "Feedback on empathy and bedside manner...(in ${langName})",
   "communicationGrade": "Excellent | Proficient | Average | Poor",
   "communicationScore": number,
-  "clinicalSkills": "Feedback on SOCRATES/History taking...",
+  "clinicalSkills": "Feedback on discovering the Pla Ra history. If missed, explicitly state it is the smoking gun for Opisthorchis viverrini...(in ${langName})",
   "clinicalSkillsGrade": "Excellent | Proficient | Average | Poor",
   "clinicalSkillsScore": number,
   "totalScore": number,
-  "summary": "Direct constructive feedback referencing 2021 CPG gaps.",
+  "summary": "Direct constructive feedback on their overall performance.",
   "checklist": {
     "clinicalStructure": {
        "opening": [{"label": "...(in ${langName})", "checked": boolean}],
