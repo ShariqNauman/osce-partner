@@ -7,7 +7,7 @@ import * as FirebaseFirestore from 'firebase/firestore';
 
 const { initializeApp } = FirebaseApp;
 const { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, sendEmailVerification } = FirebaseAuth;
-const { getFirestore, doc, setDoc, getDoc, collection, addDoc, query, getDocs, orderBy, serverTimestamp } = FirebaseFirestore;
+const { getFirestore, doc, setDoc, getDoc, collection, addDoc, query, getDocs, orderBy, serverTimestamp, deleteDoc } = FirebaseFirestore;
 
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
 import { SimulationState, EvaluationResult, TranscriptionItem, CaseBrief, UserData, HistoryItem } from './types';
@@ -545,6 +545,31 @@ export const App: React.FC = () => {
     finally { setIsAuthLoading(false); }
   };
 
+  const handleClearData = async () => {
+    if (!auth.currentUser || !userData) return;
+    try {
+      const q = query(collection(db, 'users', auth.currentUser.uid, 'question'));
+      const querySnapshot = await getDocs(q);
+      const deletePromises = querySnapshot.docs.map(document => deleteDoc(document.ref));
+      await Promise.all(deletePromises);
+      
+      setUserData({ ...userData, history: [], repetitionLevel: 0 });
+      await setDoc(doc(db, 'users', auth.currentUser.uid), { repetitionLevel: 0 }, { merge: true });
+    } catch (error) {
+      console.error("Error clearing data:", error);
+    }
+  };
+
+  const handleRestartCycle = async () => {
+    if (!auth.currentUser || !userData) return;
+    try {
+      setUserData({ ...userData, repetitionLevel: 0 });
+      await setDoc(doc(db, 'users', auth.currentUser.uid), { repetitionLevel: 0 }, { merge: true });
+    } catch (error) {
+      console.error("Error restarting cycle:", error);
+    }
+  };
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user && user.emailVerified) {
@@ -809,7 +834,7 @@ export const App: React.FC = () => {
         )}
 
         {simulationState === SimulationState.COMPLETE && evaluation && <EvaluationDisplay result={evaluation} onReset={() => setSimulationState(SimulationState.IDLE)} />}
-        {simulationState === SimulationState.DASHBOARD && userData && <ProgressDashboard userData={userData} onBack={() => setSimulationState(SimulationState.IDLE)} onClear={() => {}} onRestartCycle={() => {}} />}
+        {simulationState === SimulationState.DASHBOARD && userData && <ProgressDashboard userData={userData} onBack={() => setSimulationState(SimulationState.IDLE)} onClear={handleClearData} onRestartCycle={handleRestartCycle} />}
         {simulationState === SimulationState.SUBSCRIPTION && <SubscriptionPage onBack={() => setSimulationState(SimulationState.IDLE)} />}
       </main>
     </div>
