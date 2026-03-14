@@ -68,6 +68,22 @@ const formatTime = (seconds: number) => {
   return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
 };
 
+// Helper for model fallback on 429
+const callGeminiWithFallback = async (ai: any, options: any) => {
+  try {
+    return await ai.models.generateContent(options);
+  } catch (error: any) {
+    if (error?.status === 429 || error?.code === 429 || error?.message?.includes('429')) {
+      console.warn(`Primary model ${options.model} reached limit. Falling back to Flash...`);
+      return await ai.models.generateContent({
+        ...options,
+        model: 'gemini-1.5-flash' // Standard stable fallback
+      });
+    }
+    throw error;
+  }
+};
+
 export const App: React.FC = () => {
   const [simulationState, setSimulationState] = useState<SimulationState>(SimulationState.IDLE);
   const [timer, setTimer] = useState(600); 
@@ -80,7 +96,8 @@ export const App: React.FC = () => {
   const [notes, setNotes] = useState('');
   const [showScenario, setShowScenario] = useState(true);
 
-  const [handPos, setHandPos] = useState<{x: number, y: number} | null>(null);
+  const handPosRef = useRef<{x: number, y: number} | null>(null);
+  const cursorRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const visionCanvasRef = useRef<HTMLCanvasElement>(null);
   const cameraRef = useRef<any>(null);
@@ -102,6 +119,7 @@ export const App: React.FC = () => {
     const saved = localStorage.getItem('appLanguage');
     return (saved === 'th' ? 'th' : 'en') as Language;
   });
+  const [selectedCaseType, setSelectedCaseType] = useState<'jaundice' | 'cardiology'>('jaundice');
   const t = getTranslations(language);
 
   useEffect(() => {
@@ -195,9 +213,11 @@ export const App: React.FC = () => {
         img.src = currentCase.patientImage!;
         img.onload = () => {
           ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          if (handPos) {
+          
+          const currentHandPos = handPosRef.current;
+          if (currentHandPos) {
             ctx.beginPath();
-            ctx.arc(handPos.x * canvas.width, handPos.y * canvas.height, 45, 0, 2 * Math.PI);
+            ctx.arc(currentHandPos.x * canvas.width, currentHandPos.y * canvas.height, 45, 0, 2 * Math.PI);
             ctx.fillStyle = 'rgba(79, 70, 229, 0.8)'; 
             ctx.fill();
             ctx.strokeStyle = 'white';
@@ -229,7 +249,7 @@ export const App: React.FC = () => {
         visionIntervalRef.current = null;
       }
     }
-  }, [simulationState, handPos, currentCase]);
+  }, [simulationState, currentCase]);
 
   // Push-to-Talk Logic
   useEffect(() => {
@@ -295,9 +315,17 @@ export const App: React.FC = () => {
         hands.onResults((results: any) => {
           if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
             const landmark = results.multiHandLandmarks[0][8]; 
-            setHandPos({ x: 1 - landmark.x, y: landmark.y });
+            handPosRef.current = { x: 1 - landmark.x, y: landmark.y };
+            if (cursorRef.current) {
+               cursorRef.current.style.display = 'flex';
+               cursorRef.current.style.left = `${(1 - landmark.x) * 100}%`;
+               cursorRef.current.style.top = `${landmark.y * 100}%`;
+            }
           } else {
-            setHandPos(null);
+            handPosRef.current = null;
+            if (cursorRef.current) {
+               cursorRef.current.style.display = 'none';
+            }
           }
         });
 
@@ -342,9 +370,9 @@ export const App: React.FC = () => {
       const ai = new GoogleGenAI({ apiKey: import.meta.env.GEMINI_API_KEY });
       
       // Step 1: Generate Case Text Data
-      const caseResponse = await ai.models.generateContent({
+      const caseResponse = await callGeminiWithFallback(ai, {
         model: 'gemini-3-pro-preview',
-        contents: CASE_GENERATOR_PROMPT(language),
+        contents: CASE_GENERATOR_PROMPT(language, selectedCaseType),
         config: { 
           responseMimeType: 'application/json'
         }
@@ -352,10 +380,14 @@ export const App: React.FC = () => {
       const caseData: CaseBrief = safeParseJSON<CaseBrief>(caseResponse.text || '{}');
 
       // Step 2: Generate High-Quality Anatomy Image
-      const imageResponse = await ai.models.generateContent({
+      const imagePrompt = selectedCaseType === 'cardiology'
+        ? "A high-quality, realistic medical clinical photograph of a 70-year-old Asian man's chest and neck, directly front-facing view. Clear lighting, neutral professional medical training style. He looks distressed and slightly pale. No medical equipment, no tubes, no background clutter. Focused on a frontal view for chest examination."
+        : "A high-quality, realistic medical clinical photograph of a 58-year-old Asian man's torso and face, directly front-facing view. Clear lighting, neutral professional medical training style. He has a slight yellow tint to his skin (jaundice). No medical equipment, no tubes, no background clutter. Focused on a frontal view for abdominal examination.";
+
+      const imageResponse = await callGeminiWithFallback(ai, {
         model: 'gemini-2.5-flash-image',
         contents: {
-          parts: [{ text: "A high-quality, realistic medical clinical photograph of a 58-year-old Asian man's torso and face, directly front-facing view. Clear lighting, neutral professional medical training style. He has a slight yellow tint to his skin (jaundice). No medical equipment, no tubes, no background clutter. Focused on a frontal view for abdominal examination." }]
+          parts: [{ text: imagePrompt }]
         },
         config: {
           imageConfig: { aspectRatio: "3:4" }
@@ -517,7 +549,7 @@ export const App: React.FC = () => {
                 if (!translation) {
                   try {
                     const ai = new GoogleGenAI({ apiKey: import.meta.env.GEMINI_API_KEY });
-                    const response = await ai.models.generateContent({
+                    const response = await callGeminiWithFallback(ai, {
                       model: 'gemini-3-pro-preview',
                       contents: `Translate the following Thai medical consultation transcription into English. ONLY provide the English translation, without any explanations, quotes, or extra text.\n\nTranscription:\n${text}`,
                     });
@@ -560,7 +592,7 @@ export const App: React.FC = () => {
       config: {
         responseModalities: [Modality.AUDIO],
         systemInstruction: (isViva 
-          ? EXAMINER_INSTRUCTION(currentCase.title, currentCase.vivaQuestions, language)
+          ? EXAMINER_INSTRUCTION(currentCase.title, currentCase.vivaQuestions, language, selectedCaseType)
           : currentCase.systemInstruction + `
           
 # STRICT BEHAVIOR
@@ -614,9 +646,9 @@ export const App: React.FC = () => {
     setSimulationState(SimulationState.EVALUATING);
     try {
       const ai = new GoogleGenAI({ apiKey: import.meta.env.GEMINI_API_KEY });
-      const response = await ai.models.generateContent({
+      const response = await callGeminiWithFallback(ai, {
         model: 'gemini-3-pro-preview',
-        contents: EVALUATION_PROMPT(historySnapshot, currentCase?.title || 'OSCE Case', currentCase?.vivaQuestions || [], language),
+        contents: EVALUATION_PROMPT(historySnapshot, currentCase?.title || 'OSCE Case', currentCase?.vivaQuestions || [], language, selectedCaseType),
         config: { 
           responseMimeType: 'application/json'
         }
@@ -752,16 +784,16 @@ export const App: React.FC = () => {
   if (!userData) {
     if (simulationState === SimulationState.VERIFICATION_REQUIRED) {
       return (
-        <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-800 p-8 rounded-3xl shadow-xl w-full max-w-md border border-slate-200 dark:border-slate-700 text-center flex flex-col items-center">
+        <div className="min-h-screen bg-medical-50 dark:bg-dark-bg flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-dark-surface p-8 rounded-3xl shadow-xl w-full max-w-md border border-medical-200 dark:border-medical-800 text-center flex flex-col items-center">
             <div className="flex justify-center mb-6"><div className="p-4 bg-indigo-600 rounded-2xl text-white shadow-lg"><CheckCircle2 size={40} /></div></div>
             <h1 className="text-2xl font-black text-center text-slate-900 dark:text-white mb-2">{t.verifyYourAccount}</h1>
-            <p className="text-slate-500 dark:text-slate-400 font-medium mb-6">{t.verificationEmailSent}</p>
+            <p className="text-medical-500 dark:text-medical-400 font-medium mb-6">{t.verificationEmailSent}</p>
             <div className="bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700/50 text-amber-700 dark:text-amber-300 px-4 py-3 rounded-xl mb-8 flex items-start gap-3 text-left w-full">
                <span className="text-amber-500 dark:text-amber-400 mt-0.5"><AlertCircle size={18} /></span>
                <p className="text-sm font-medium leading-snug">{t.checkSpam} <span className="font-bold">{t.spamOrJunk}</span> {t.folder}</p>
             </div>
-            <button onClick={() => { setSimulationState(SimulationState.IDLE); setAuthMode('login'); }} className="w-full py-4 bg-slate-900 dark:bg-indigo-600 hover:bg-black dark:hover:bg-indigo-700 text-white rounded-xl font-black uppercase tracking-widest shadow-lg flex items-center justify-center gap-2 transition-all">
+            <button onClick={() => { setSimulationState(SimulationState.IDLE); setAuthMode('login'); }} className="w-full py-4 bg-medical-900 dark:bg-medical-600 hover:bg-black dark:hover:bg-medical-700 text-white rounded-xl font-black uppercase tracking-widest shadow-lg flex items-center justify-center gap-2 transition-all">
                {t.backToLogin} <ArrowRight size={18} />
             </button>
           </div>
@@ -770,20 +802,20 @@ export const App: React.FC = () => {
     }
 
     return (
-      <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex items-center justify-center p-4">
-        <div className="bg-white dark:bg-slate-800 p-8 rounded-3xl shadow-xl w-full max-w-md border border-slate-200 dark:border-slate-700">
-          <div className="flex justify-center mb-6"><div className="p-4 bg-indigo-600 rounded-2xl text-white shadow-lg"><GraduationCap size={40} /></div></div>
-          <h1 className="text-2xl font-black text-center text-slate-900 dark:text-white mb-2">{t.oscepartner}</h1>
-          <p className="text-center text-slate-500 dark:text-slate-400 font-bold mb-8 uppercase text-[10px] tracking-widest text-center w-full">{t.clinicalTrainingPlatform}</p>
+      <div className="min-h-screen bg-medical-50 dark:bg-dark-bg flex items-center justify-center p-4">
+        <div className="bg-white dark:bg-dark-surface p-8 rounded-3xl shadow-xl w-full max-w-md border border-medical-200 dark:border-medical-800">
+          <div className="flex justify-center mb-6"><div className="p-4 bg-medical-600 rounded-2xl text-white shadow-lg"><GraduationCap size={40} /></div></div>
+          <h1 className="text-2xl font-black text-center text-medical-900 dark:text-white mb-2">{t.oscepartner}</h1>
+          <p className="text-center text-medical-500 dark:text-medical-400 font-bold mb-8 uppercase text-[10px] tracking-widest text-center w-full">{t.clinicalTrainingPlatform}</p>
           <div className="space-y-4">
-            {authMode === 'signup' && <input type="text" placeholder={t.fullName} className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none font-bold text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:border-indigo-500 dark:focus:border-indigo-400 transition-colors" value={nameInput} onChange={e => setNameInput(e.target.value)} />}
-            <input type="email" placeholder={t.email} className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none font-bold text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:border-indigo-500 dark:focus:border-indigo-400 transition-colors" value={emailInput} onChange={e => setEmailInput(e.target.value)} />
-            <input type="password" placeholder={t.password} className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none font-bold text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:border-indigo-500 dark:focus:border-indigo-400 transition-colors" value={passwordInput} onChange={e => setPasswordInput(e.target.value)} />
+            {authMode === 'signup' && <input type="text" placeholder={t.fullName} className="w-full px-4 py-3 bg-medical-50 dark:bg-dark-bg border border-medical-200 dark:border-medical-800 rounded-xl outline-none font-bold text-medical-900 dark:text-white placeholder-medical-400 dark:placeholder-medical-500 focus:border-medical-500 dark:focus:border-medical-400 transition-colors" value={nameInput} onChange={e => setNameInput(e.target.value)} />}
+            <input type="email" placeholder={t.email} className="w-full px-4 py-3 bg-medical-50 dark:bg-dark-bg border border-medical-200 dark:border-medical-800 rounded-xl outline-none font-bold text-medical-900 dark:text-white placeholder-medical-400 dark:placeholder-medical-500 focus:border-medical-500 dark:focus:border-medical-400 transition-colors" value={emailInput} onChange={e => setEmailInput(e.target.value)} />
+            <input type="password" placeholder={t.password} className="w-full px-4 py-3 bg-medical-50 dark:bg-dark-bg border border-medical-200 dark:border-medical-800 rounded-xl outline-none font-bold text-medical-900 dark:text-white placeholder-medical-400 dark:placeholder-medical-500 focus:border-medical-500 dark:focus:border-medical-400 transition-colors" value={passwordInput} onChange={e => setPasswordInput(e.target.value)} />
             {authError && <p className="text-rose-500 dark:text-rose-400 text-xs font-bold text-center">{authError}</p>}
-            <button onClick={handleAuth} disabled={isAuthLoading} className="w-full py-4 bg-slate-900 dark:bg-indigo-600 hover:bg-black dark:hover:bg-indigo-700 text-white rounded-xl font-black uppercase tracking-widest shadow-lg flex items-center justify-center gap-2 transition-all">
+            <button onClick={handleAuth} disabled={isAuthLoading} className="w-full py-4 bg-medical-900 dark:bg-medical-600 hover:bg-black dark:hover:bg-medical-700 text-white rounded-xl font-black uppercase tracking-widest shadow-lg flex items-center justify-center gap-2 transition-all">
               {isAuthLoading ? <Loader2 className="animate-spin" /> : (authMode === 'login' ? t.login : t.createAccount)} <ArrowRight size={18} />
             </button>
-            <p className="text-center text-sm font-bold text-slate-400 dark:text-slate-500 mt-6">{authMode === 'login' ? t.newStudent : t.alreadyEnrolled}<button onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')} className="ml-2 text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 hover:underline">{authMode === 'login' ? t.signUp : t.logIn}</button></p>
+            <p className="text-center text-sm font-bold text-medical-400 dark:text-medical-500 mt-6">{authMode === 'login' ? t.newStudent : t.alreadyEnrolled}<button onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')} className="ml-2 text-medical-600 dark:text-medical-400 hover:text-medical-700 dark:hover:text-medical-300 hover:underline">{authMode === 'login' ? t.signUp : t.logIn}</button></p>
           </div>
         </div>
       </div>
@@ -791,101 +823,120 @@ export const App: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 dark:text-slate-100 text-slate-900 font-sans selection:bg-indigo-100 selection:text-indigo-900 transition-colors duration-300">
-      <header className="bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 sticky top-0 z-50 transition-colors duration-300">
+    <div className="h-screen bg-medical-50 dark:bg-dark-bg dark:text-medical-100 text-medical-900 font-sans selection:bg-medical-100 selection:text-medical-900 transition-colors duration-300 flex flex-col overflow-hidden">
+      <header className="bg-white dark:bg-dark-surface border-b border-medical-200 dark:border-medical-800 sticky top-0 z-50 transition-colors duration-300">
         <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
           <div 
             className="flex items-center gap-3 cursor-pointer group" 
             onClick={() => { cleanupSession(); stopAudio(); setSimulationState(SimulationState.IDLE); }}
           >
-            <div className="p-2.5 bg-indigo-600 rounded-xl text-white shadow-lg rotate-3 group-hover:rotate-6 transition-transform"><Heart size={24} /></div>
-            <div><h1 className="text-xl font-black tracking-tight text-slate-900 dark:text-white">{t.oscepartner}</h1><p className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">{t.clinicalSimulation}</p></div>
+            <div className="p-2.5 bg-medical-600 rounded-xl text-white shadow-lg rotate-3 group-hover:rotate-6 transition-transform"><Heart size={24} /></div>
+            <div><h1 className="text-xl font-black tracking-tight text-medical-900 dark:text-white">{t.oscepartner}</h1><p className="text-[10px] font-black uppercase tracking-widest text-medical-400 dark:text-medical-500">{t.clinicalSimulation}</p></div>
           </div>
           <div className="flex items-center gap-4">
-            <button onClick={() => { cleanupSession(); stopAudio(); setSimulationState(SimulationState.SETTINGS); }} className="p-3 rounded-xl transition-all text-slate-500 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-700" title={t.settings}><Settings size={20} /></button>
-            <button onClick={() => { cleanupSession(); stopAudio(); setSimulationState(SimulationState.SUBSCRIPTION); }} className="p-3 rounded-xl transition-all flex items-center gap-2 font-black uppercase tracking-widest text-[10px] text-slate-500 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-700"><CreditCard size={18} /> {t.upgrade}</button>
-            <button onClick={() => { cleanupSession(); stopAudio(); setSimulationState(SimulationState.DASHBOARD); }} className="p-3 rounded-xl transition-all text-slate-500 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-700"><BarChart size={22} /></button>
+            <button onClick={() => { cleanupSession(); stopAudio(); setSimulationState(SimulationState.SETTINGS); }} className="p-3 rounded-xl transition-all text-medical-500 hover:bg-medical-50 dark:text-medical-400 dark:hover:bg-medical-800" title={t.settings}><Settings size={20} /></button>
+            <button onClick={() => { cleanupSession(); stopAudio(); setSimulationState(SimulationState.SUBSCRIPTION); }} className="p-3 rounded-xl transition-all flex items-center gap-2 font-black uppercase tracking-widest text-[10px] text-medical-500 hover:bg-medical-50 dark:text-medical-400 dark:hover:bg-medical-800"><CreditCard size={18} /> {t.upgrade}</button>
+            <button onClick={() => { cleanupSession(); stopAudio(); setSimulationState(SimulationState.DASHBOARD); }} className="p-3 rounded-xl transition-all text-medical-500 hover:bg-medical-50 dark:text-medical-400 dark:hover:bg-medical-800"><BarChart size={22} /></button>
             <div className="h-8 w-px bg-slate-200 dark:bg-slate-700 mx-1" />
-            <div className="flex items-center gap-3 bg-slate-50 dark:bg-slate-800/50 p-1.5 pr-4 rounded-2xl border border-slate-100 dark:border-slate-700 transition-colors duration-300">
-              <div className="w-9 h-9 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl flex items-center justify-center text-indigo-600 dark:text-indigo-400"><User size={20} /></div>
-              <div className="hidden sm:block"><p className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">{t.student}</p><p className="text-xs font-bold text-slate-700 dark:text-slate-300">{userData.name}</p></div>
+            <div className="flex items-center gap-3 bg-medical-50 dark:bg-dark-surface/50 p-1.5 pr-4 rounded-2xl border border-medical-100 dark:border-medical-800 transition-colors duration-300">
+              <div className="w-9 h-9 bg-white dark:bg-dark-surface border border-medical-200 dark:border-medical-700 rounded-xl flex items-center justify-center text-medical-600 dark:text-medical-400"><User size={20} /></div>
+              <div className="hidden sm:block"><p className="text-[10px] font-black uppercase tracking-widest text-medical-400 dark:text-medical-500">{t.student}</p><p className="text-xs font-bold text-slate-700 dark:text-slate-300">{userData.name}</p></div>
               <button onClick={() => { cleanupSession(); stopAudio(); signOut(auth); setUserData(null); }} className="ml-2 text-slate-400 hover:text-rose-500 dark:hover:text-rose-400"><LogOut size={16} /></button>
             </div>
           </div>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-6 py-8">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-6 py-8 overflow-y-auto custom-scrollbar">
         {simulationState === SimulationState.IDLE && (
           <div className="max-w-2xl mx-auto text-center py-20 animate-in fade-in slide-in-from-bottom-8 duration-700">
-            <div className="mb-8 inline-flex p-8 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-[3rem] text-indigo-600 dark:text-indigo-400 shadow-2xl relative">
+            <div className="mb-8 inline-flex p-8 bg-white dark:bg-dark-surface border border-medical-200 dark:border-medical-800 rounded-[3rem] text-medical-600 dark:text-medical-400 shadow-2xl relative">
               <div className="absolute -top-4 -right-4 bg-emerald-500 dark:bg-emerald-600 text-white p-2 rounded-xl shadow-lg animate-bounce"><Sparkles size={16} /></div>
               <Brain size={64} />
             </div>
             <h2 className="text-5xl font-black text-slate-900 dark:text-white mb-6 leading-[1.1] tracking-tight text-balance">{t.clinicalOsceSimulator}</h2>
             <p className="text-xl text-slate-500 dark:text-slate-400 font-bold mb-10 max-w-lg mx-auto">{t.idleDescription}</p>
-            <button onClick={initiateNewSimulation} className="px-12 py-5 bg-slate-900 dark:bg-indigo-600 hover:bg-black dark:hover:bg-indigo-700 text-white font-black uppercase tracking-[0.2em] rounded-2xl shadow-2xl hover:scale-105 transition-all flex items-center gap-3 mx-auto">{t.startClinicalCase} <ArrowRight /></button>
+            
+            <div className="mb-10 max-w-md mx-auto">
+              <p className="text-[10px] font-black uppercase tracking-widest text-medical-400 dark:text-medical-500 mb-4">{t.selectCase}</p>
+              <div className="grid grid-cols-2 gap-4">
+                <button 
+                  onClick={() => setSelectedCaseType('jaundice')}
+                  className={`p-4 rounded-2xl border-2 font-bold transition-all ${selectedCaseType === 'jaundice' ? 'bg-medical-50 dark:bg-medical-500/10 border-medical-600 text-medical-600 dark:text-medical-400' : 'bg-white dark:bg-dark-surface border-medical-200 dark:border-medical-700 text-medical-500 dark:text-medical-400'}`}
+                >
+                  {t.yellowJaundice}
+                </button>
+                <button 
+                  onClick={() => setSelectedCaseType('cardiology')}
+                  className={`p-4 rounded-2xl border-2 font-bold transition-all ${selectedCaseType === 'cardiology' ? 'bg-medical-50 dark:bg-medical-500/10 border-medical-600 text-medical-600 dark:text-medical-400' : 'bg-white dark:bg-dark-surface border-medical-200 dark:border-medical-700 text-medical-500 dark:text-medical-400'}`}
+                >
+                  {t.cardiologyCase}
+                </button>
+              </div>
+            </div>
+
+            <button onClick={initiateNewSimulation} className="px-12 py-5 bg-medical-900 dark:bg-medical-600 hover:bg-black dark:hover:bg-medical-700 text-white font-black uppercase tracking-[0.2em] rounded-2xl shadow-2xl hover:scale-105 transition-all flex items-center gap-3 mx-auto">{t.startClinicalCase} <ArrowRight /></button>
           </div>
         )}
 
         {simulationState === SimulationState.GENERATING && (
-          <div className="max-w-md mx-auto text-center py-24 flex flex-col items-center"><Loader2 size={100} className="text-indigo-600 dark:text-indigo-400 animate-spin mb-10" /><h3 className="text-2xl font-black text-slate-900 dark:text-white">{t.preparingAssessment}</h3></div>
+          <div className="max-w-md mx-auto text-center py-24 flex flex-col items-center"><Loader2 size={100} className="text-medical-600 dark:text-medical-400 animate-spin mb-10" /><h3 className="text-2xl font-black text-medical-900 dark:text-white">{t.preparingAssessment}</h3></div>
         )}
 
         {simulationState === SimulationState.BRIEFING && currentCase && (
-          <div className="max-w-3xl mx-auto bg-white dark:bg-slate-800 rounded-[3rem] shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden animate-in zoom-in-95">
-            <div className="bg-slate-900 dark:bg-slate-900 p-12 text-white relative">
+          <div className="max-w-3xl mx-auto bg-white dark:bg-dark-surface rounded-[3rem] shadow-2xl border border-medical-200 dark:border-medical-800 overflow-hidden animate-in zoom-in-95">
+            <div className="bg-medical-900 dark:bg-dark-bg p-12 text-white relative">
               <div className="absolute top-12 right-12 opacity-10"><Heart size={120} /></div>
-              <p className="text-indigo-400 dark:text-indigo-300 font-black uppercase tracking-widest text-xs mb-4">{t.initialBriefing}</p>
+              <p className="text-medical-400 dark:text-medical-300 font-black uppercase tracking-widest text-xs mb-4">{t.initialBriefing}</p>
               <h2 className="text-4xl font-black mb-8 leading-tight tracking-tight">{currentCase.title}</h2>
-              <div className="bg-slate-800/50 dark:bg-slate-800 p-8 rounded-2xl border border-slate-700 dark:border-slate-600 shadow-inner">
+              <div className="bg-medical-800/50 dark:bg-dark-surface p-8 rounded-2xl border border-medical-700 dark:border-medical-600 shadow-inner">
                 <p className="text-xl italic font-medium leading-relaxed">"{currentCase.briefingText}"</p>
               </div>
             </div>
             <div className="p-12 text-center">
-              <div className="mb-10 flex items-center justify-center gap-6 text-slate-400 dark:text-slate-500">
+              <div className="mb-10 flex items-center justify-center gap-6 text-medical-400 dark:text-medical-500">
                 <div className="flex items-center gap-2"><User size={18}/><span className="text-xs font-black uppercase tracking-widest">{currentCase.patientName}</span></div>
-                <div className="h-6 w-px bg-slate-200 dark:bg-slate-700"/>
+                <div className="h-6 w-px bg-medical-200 dark:border-medical-800"/>
                 <div className="flex items-center gap-2"><Clock size={18}/><span className="text-xs font-black uppercase tracking-widest">{currentCase.patientAge} {t.yearsOld}</span></div>
               </div>
-              <button onClick={() => startSimulation(SimulationState.RUNNING)} className="w-full py-6 bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase tracking-[0.2em] rounded-2xl shadow-2xl transition-all flex items-center justify-center gap-3 group">{t.startEncounter} <ArrowRight size={24} className="group-hover:translate-x-1 transition-transform" /></button>
+              <button onClick={() => startSimulation(SimulationState.RUNNING)} className="w-full py-6 bg-medical-600 hover:bg-medical-700 text-white font-black uppercase tracking-[0.2em] rounded-2xl shadow-2xl transition-all flex items-center justify-center gap-3 group">{t.startEncounter} <ArrowRight size={24} className="group-hover:translate-x-1 transition-transform" /></button>
             </div>
           </div>
         )}
 
         {simulationState === SimulationState.RUNNING && currentCase && (
           <div className="flex flex-col gap-8 animate-in fade-in slide-in-from-top-4">
-            <div className="bg-white dark:bg-slate-800 rounded-[2rem] shadow-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+            <div className="bg-white dark:bg-dark-surface rounded-[2rem] shadow-xl border border-medical-200 dark:border-medical-800 overflow-hidden">
                <div className="p-6 cursor-pointer flex items-center justify-between group" onClick={() => setShowScenario(!showScenario)}>
-                  <div className="flex items-center gap-4"><StickyNote size={20} className="text-indigo-600 dark:text-indigo-400" /><h3 className="text-lg font-black text-slate-900 dark:text-white">{t.patientCaseFile}</h3></div>
+                  <div className="flex items-center gap-4"><StickyNote size={20} className="text-medical-600 dark:text-medical-400" /><h3 className="text-lg font-black text-slate-900 dark:text-white">{t.patientCaseFile}</h3></div>
                   <ChevronDown size={24} className={`text-slate-500 dark:text-slate-400 transition-transform duration-300 ${showScenario ? 'rotate-180' : ''}`} />
                </div>
                {showScenario && (
-                 <div className="p-8 pt-2 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-700 grid grid-cols-1 md:grid-cols-2 gap-8">
-                    <div><p className="text-[10px] font-black uppercase text-slate-400 dark:text-slate-500 mb-3 tracking-widest">{t.instruction}</p><p className="text-lg font-bold italic leading-relaxed text-slate-900 dark:text-slate-200">"{currentCase.briefingText}"</p></div>
+                 <div className="p-8 pt-2 bg-medical-50 dark:bg-dark-surface/50 border-t border-medical-100 dark:border-medical-800 grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <div><p className="text-[10px] font-black uppercase text-slate-400 dark:text-slate-500 mb-3 tracking-widest">{t.instruction}</p><p className="text-lg font-bold italic leading-relaxed text-medical-900 dark:text-medical-200">"{currentCase.briefingText}"</p></div>
                     <div className="space-y-4">
                       <div><p className="text-[10px] font-black uppercase text-slate-400 dark:text-slate-500 mb-1 tracking-widest">{t.patientDetails}</p><p className="text-sm font-black text-slate-900 dark:text-white">{currentCase.patientName}, {currentCase.patientAge} {t.yearsOld}, {currentCase.gender}</p></div>
-                      <div><p className="text-[10px] font-black uppercase text-slate-400 dark:text-slate-500 mb-1 tracking-widest">{t.icNumber}</p><p className="text-sm font-mono font-black text-indigo-600 dark:text-indigo-400">{currentCase.icNumber}</p></div>
+                      <div><p className="text-[10px] font-black uppercase text-slate-400 dark:text-slate-500 mb-1 tracking-widest">{t.icNumber}</p><p className="text-sm font-mono font-black text-medical-600 dark:text-medical-400">{currentCase.icNumber}</p></div>
                     </div>
                  </div>
                )}
             </div>
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              <div className="lg:col-span-2 bg-white dark:bg-slate-800 rounded-[2rem] shadow-2xl border border-slate-200 dark:border-slate-700 flex flex-col min-h-[600px] overflow-hidden">
-                <div className="bg-slate-900 dark:bg-slate-950 px-8 py-5 flex items-center justify-between text-white shadow-lg">
-                  <div className="flex items-center gap-4"><Clock size={20} className="text-indigo-400" /><p className="font-mono text-2xl font-bold">{formatTime(timer)}</p></div>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 flex-1 min-h-0">
+              <div className="lg:col-span-2 bg-white dark:bg-slate-800 rounded-[2rem] shadow-2xl border border-slate-200 dark:border-slate-700 flex flex-col min-h-[500px] lg:min-h-0 overflow-hidden">
+                <div className="bg-dark-bg dark:bg-black px-8 py-5 flex items-center justify-between text-white shadow-lg">
+                  <div className="flex items-center gap-4"><Clock size={20} className="text-medical-400" /><p className="font-mono text-2xl font-bold">{formatTime(timer)}</p></div>
                   <button onClick={() => setIsMuted(!isMuted)} className={`p-3 rounded-xl transition-all border-2 ${isMuted ? 'bg-rose-50 dark:bg-rose-500/10 text-rose-500 border-rose-100 dark:border-rose-500/20' : 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-500 border-emerald-100 dark:border-emerald-500/20'}`}>{isMuted ? <MicOff size={24} /> : <Mic size={24} />}</button>
                 </div>
-                <div className="flex-1 p-6 flex flex-col bg-slate-50/50 dark:bg-slate-800 overflow-y-auto">
+                <div className="flex-1 p-6 flex flex-col bg-medical-50/30 dark:bg-dark-bg/50 overflow-y-auto">
                     {transcription.length === 0 ? (
                       <div className="m-auto flex flex-col items-center text-center">
-                        <div className="mb-6 p-8 bg-white dark:bg-slate-700 rounded-full shadow-xl relative border-2 border-indigo-50 dark:border-slate-600">
-                          <div className={`absolute inset-0 rounded-full ${isMuted ? '' : 'bg-indigo-500/10 dark:bg-indigo-500/20 animate-ping'}`} />
-                          <Waves size={64} className={`${isMuted ? 'text-slate-300 dark:text-slate-600' : 'text-indigo-600 dark:text-indigo-400'} relative z-10 transition-colors`} />
+                        <div className="mb-6 p-8 bg-white dark:bg-dark-surface rounded-full shadow-xl relative border-2 border-medical-50 dark:border-medical-800">
+                          <div className={`absolute inset-0 rounded-full ${isMuted ? '' : 'bg-medical-500/10 dark:bg-medical-500/20 animate-ping'}`} />
+                          <Waves size={64} className={`${isMuted ? 'text-medical-300 dark:text-medical-600' : 'text-medical-600 dark:text-medical-400'} relative z-10 transition-colors`} />
                         </div>
-                        <h3 className="text-2xl font-black text-slate-900 dark:text-white mb-2">{t.liveAudioSession}</h3>
-                        <p className="text-slate-500 dark:text-slate-400 font-bold max-w-xs mx-auto">{t.activeListeningMode} {currentCase.patientName} {t.toBeginHistoryTaking}</p>
-                        <div className={`mt-8 flex items-center gap-3 px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest border transition-colors ${isMuted ? 'bg-rose-100 dark:bg-rose-900/50 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-800' : 'bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800'}`}>
+                        <h3 className="text-2xl font-black text-medical-900 dark:text-white mb-2">{t.liveAudioSession}</h3>
+                        <p className="text-medical-500 dark:text-medical-400 font-bold max-w-xs mx-auto">{t.activeListeningMode} {currentCase.patientName} {t.toBeginHistoryTaking}</p>
+                        <div className={`mt-8 flex items-center gap-3 px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest border transition-colors ${isMuted ? 'bg-rose-100 dark:bg-rose-900/50 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-800' : 'bg-medical-100 dark:bg-medical-900/50 text-medical-700 dark:text-medical-300 border-medical-200 dark:border-medical-800'}`}>
                           {isMuted ? <MicOff size={14} /> : <Volume2 size={14} />} 
                           {isMuted ? "Hold SPACE to Speak" : t.realtimeResponseActive}
                         </div>
@@ -894,7 +945,7 @@ export const App: React.FC = () => {
                       <div className="space-y-4 flex flex-col pb-4 h-full">
                         {transcription.map((item) => (
                            <div key={item.id} className={`flex w-full ${item.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                              <div className={`max-w-[85%] p-4 rounded-[2rem] shadow-sm ${item.role === 'user' ? 'bg-indigo-600 text-white rounded-br-md text-right' : 'bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 rounded-bl-md border border-slate-100 dark:border-slate-600 text-left'}`}>
+                              <div className={`max-w-[85%] p-4 rounded-[2rem] shadow-sm ${item.role === 'user' ? 'bg-medical-600 text-white rounded-br-md text-right' : 'bg-white dark:bg-dark-surface text-medical-800 dark:text-medical-100 rounded-bl-md border border-medical-100 dark:border-medical-800 text-left'}`}>
                                  <p className="font-medium leading-relaxed">{item.text}</p>
                                  {item.englishTranslation && (
                                    <p className="text-sm mt-3 pt-3 opacity-90 border-t font-semibold tracking-wide border-current/20">{item.englishTranslation}</p>
@@ -905,13 +956,13 @@ export const App: React.FC = () => {
                       </div>
                     )}
                 </div>
-                <div className="p-8 border-t border-slate-100 dark:border-slate-700 bg-white dark:bg-slate-800 flex justify-end gap-4 shadow-inner">
-                  <button onClick={startExamMode} className="px-10 py-5 bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-widest rounded-2xl flex items-center gap-3 shadow-xl transition-all hover:scale-105 group">{t.physicalExam} <ScanFace size={24} className="group-hover:scale-110 transition-transform" /></button>
+                <div className="p-8 border-t border-medical-100 dark:border-medical-800 bg-white dark:bg-dark-surface flex justify-end gap-4 shadow-inner">
+                  <button onClick={startExamMode} className="px-10 py-5 bg-medical-600 hover:bg-medical-700 text-white font-black uppercase tracking-widest rounded-2xl flex items-center gap-3 shadow-xl transition-all hover:scale-105 group">{t.physicalExam} <ScanFace size={24} className="group-hover:scale-110 transition-transform" /></button>
                 </div>
               </div>
-              <div className="bg-white dark:bg-slate-800 rounded-[2rem] shadow-2xl border border-slate-200 dark:border-slate-700 p-8 flex flex-col h-full">
-                <div className="flex items-center gap-3 mb-6"><StickyNote size={20} className="text-indigo-600 dark:text-indigo-400" /><h3 className="font-black uppercase text-xs tracking-widest text-slate-900 dark:text-white">{t.clinicalLog}</h3></div>
-                <textarea className="flex-1 p-6 bg-slate-50 dark:bg-slate-900/50 rounded-[2rem] outline-none font-bold text-slate-700 dark:text-slate-300 text-sm resize-none shadow-inner border border-transparent dark:border-slate-700 focus:border-indigo-100 dark:focus:border-indigo-500 transition-all leading-relaxed placeholder-slate-400 dark:placeholder-slate-500" placeholder={t.recordFindings} value={notes} onChange={e => setNotes(e.target.value)} />
+              <div className="bg-white dark:bg-dark-surface rounded-[2rem] shadow-2xl border border-medical-200 dark:border-medical-800 p-8 flex flex-col h-full">
+                <div className="flex items-center gap-3 mb-6"><StickyNote size={20} className="text-medical-600 dark:text-medical-400" /><h3 className="font-black uppercase text-xs tracking-widest text-slate-900 dark:text-white">{t.clinicalLog}</h3></div>
+                <textarea className="flex-1 p-6 bg-medical-50 dark:bg-dark-bg/50 rounded-[2rem] outline-none font-bold text-medical-700 dark:text-medical-300 text-sm resize-none shadow-inner border border-transparent dark:border-medical-800 focus:border-medical-100 dark:focus:border-medical-600 transition-all leading-relaxed placeholder-medical-400 dark:placeholder-medical-500" placeholder={t.recordFindings} value={notes} onChange={e => setNotes(e.target.value)} />
               </div>
             </div>
           </div>
@@ -919,39 +970,37 @@ export const App: React.FC = () => {
 
         {simulationState === SimulationState.EXAMINATION && currentCase && (
           <div className="flex flex-col gap-8 animate-in fade-in duration-700">
-             <div className="bg-white dark:bg-slate-800 rounded-[2.5rem] shadow-xl border border-slate-200 dark:border-slate-700 p-8 flex items-center justify-between">
+             <div className="bg-white dark:bg-dark-surface rounded-[2.5rem] shadow-xl border border-medical-200 dark:border-medical-800 p-8 flex items-center justify-between">
                 <div className="flex items-center gap-4">
                   <div className="p-4 bg-emerald-100 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-2xl"><ScanFace size={32} /></div>
                   <div><h3 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">{t.anatomicalExamination}</h3><p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">{t.feedbackActive}</p></div>
                 </div>
                 <div className="flex items-center gap-4">
-                   <div className="bg-slate-900 dark:bg-slate-950 px-8 py-4 rounded-2xl text-white font-mono text-2xl font-bold flex items-center gap-4 shadow-xl shadow-slate-200 dark:shadow-none"><Clock size={22} className="text-indigo-400" /> {formatTime(timer)}</div>
+                   <div className="bg-medical-900 dark:bg-black px-8 py-4 rounded-2xl text-white font-mono text-2xl font-bold flex items-center gap-4 shadow-xl shadow-medical-200 dark:shadow-none"><Clock size={22} className="text-medical-400" /> {formatTime(timer)}</div>
                 </div>
              </div>
 
-             <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-                <div className="lg:col-span-3 bg-white dark:bg-slate-800 rounded-[3rem] shadow-2xl p-2 relative border border-slate-200 dark:border-slate-700 overflow-hidden min-h-[800px]">
+             <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 flex-1 min-h-0">
+                <div className="lg:col-span-3 bg-white dark:bg-dark-surface rounded-[3rem] shadow-2xl p-2 relative border border-medical-200 dark:border-medical-800 overflow-hidden min-h-[600px] lg:min-h-0">
                    <canvas ref={visionCanvasRef} width={360} height={640} className="hidden" />
                    
-                   <div className="absolute inset-0 bg-slate-900 flex items-center justify-center overflow-hidden rounded-[2.5rem]">
-                      {currentCase.patientImage && <img src={currentCase.patientImage} className="h-full w-auto object-cover opacity-90 select-none pointer-events-none" alt="Anatomy" />}
+                   <div className="absolute inset-0 bg-medical-900 flex items-center justify-center overflow-hidden rounded-[2.5rem]">
+                      {currentCase.patientImage && <img src={currentCase.patientImage} className="max-h-full max-w-full object-contain opacity-90 select-none pointer-events-none" alt="Anatomy" />}
                       
-                      {handPos && (
-                        <div className="absolute w-28 h-28 bg-indigo-500/10 border-[4px] border-indigo-400 rounded-full flex items-center justify-center z-50 transform -translate-x-1/2 -translate-y-1/2 shadow-[0_0_60px_rgba(99,102,241,0.6)] transition-all duration-75" style={{ left: `${handPos.x * 100}%`, top: `${handPos.y * 100}%` }}>
-                          <div className="w-5 h-5 bg-indigo-600 rounded-full animate-pulse shadow-inner" />
-                        </div>
-                      )}
+                      <div ref={cursorRef} className="absolute w-28 h-28 bg-medical-500/10 border-[4px] border-medical-400 rounded-full items-center justify-center z-50 transform -translate-x-1/2 -translate-y-1/2 shadow-[0_0_60px_rgba(7,94,125,0.6)] transition-all duration-75" style={{ display: 'none' }}>
+                        <div className="w-5 h-5 bg-medical-600 rounded-full animate-pulse shadow-inner" />
+                      </div>
                    </div>
                    
-                   <div className="absolute top-8 right-8 w-64 h-48 bg-black rounded-[2rem] border-4 border-white dark:border-slate-800 shadow-2xl overflow-hidden z-[60]">
+                   <div className="absolute top-8 right-8 w-64 h-48 bg-black rounded-[2rem] border-4 border-white dark:border-dark-surface shadow-2xl overflow-hidden z-[60]">
                       <video ref={videoRef} className="w-full h-full object-cover scale-x-[-1]" autoPlay playsInline muted />
                    </div>
                 </div>
 
                 <div className="space-y-8 flex flex-col">
-                   <div className="bg-white dark:bg-slate-800 rounded-[2.5rem] shadow-2xl border border-slate-200 dark:border-slate-700 p-8 flex-1 flex flex-col overflow-hidden">
-                      <h4 className="font-black uppercase tracking-widest text-[10px] text-slate-400 dark:text-slate-500 mb-6 flex items-center gap-2 border-b border-slate-100 dark:border-slate-700 pb-3"><MessageSquare size={16} /> {t.clinicalStatus}</h4>
-                      <div className="flex-1 p-4 flex flex-col overflow-y-auto bg-slate-50/50 dark:bg-slate-900/50 rounded-3xl border-2 border-slate-100 dark:border-slate-700 mb-6">
+                   <div className="bg-white dark:bg-dark-surface rounded-[2.5rem] shadow-2xl border border-medical-200 dark:border-medical-800 p-8 flex-1 flex flex-col overflow-hidden">
+                      <h4 className="font-black uppercase tracking-widest text-[10px] text-medical-400 dark:text-medical-500 mb-6 flex items-center gap-2 border-b border-medical-100 dark:border-medical-800 pb-3"><MessageSquare size={16} /> {t.clinicalStatus}</h4>
+                      <div className="flex-1 p-4 flex flex-col overflow-y-auto bg-medical-50/50 dark:bg-dark-bg/50 rounded-3xl border-2 border-medical-100 dark:border-medical-800 mb-6">
                           {transcription.length === 0 ? (
                             <div className="m-auto flex flex-col items-center text-center">
                               <Waves size={32} className="text-indigo-300 dark:text-indigo-500 mb-4 animate-pulse" />
@@ -961,7 +1010,7 @@ export const App: React.FC = () => {
                             <div className="space-y-3 flex flex-col pb-2">
                               {transcription.map((item) => (
                                 <div key={item.id} className={`flex w-full ${item.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                  <div className={`max-w-[90%] p-3 rounded-2xl shadow-sm text-sm ${item.role === 'user' ? 'bg-indigo-600 text-white rounded-br-md text-right' : 'bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 rounded-bl-md border border-slate-100 dark:border-slate-600 text-left'}`}>
+                                  <div className={`max-w-[90%] p-3 rounded-2xl shadow-sm text-sm ${item.role === 'user' ? 'bg-medical-600 text-white rounded-br-md text-right' : 'bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 rounded-bl-md border border-slate-100 dark:border-slate-600 text-left'}`}>
                                     <p className="font-medium">{item.text}</p>
                                     {item.englishTranslation && (
                                       <p className="text-xs mt-2 pt-2 opacity-90 border-t border-current/20">{item.englishTranslation}</p>
@@ -975,7 +1024,7 @@ export const App: React.FC = () => {
                       <div className="flex items-center gap-4 mb-6 justify-center">
                         <button onClick={() => setIsMuted(!isMuted)} className={`p-6 rounded-[2rem] border-2 transition-all shadow-xl hover:scale-105 active:scale-95 ${isMuted ? 'bg-rose-500 border-rose-400 text-white' : 'bg-emerald-500 border-emerald-400 text-white'}`}>{isMuted ? <MicOff size={32} /> : <Mic size={32} />}</button>
                       </div>
-                      <button onClick={startViva} className="w-full py-6 bg-slate-900 dark:bg-indigo-600 text-white font-black uppercase tracking-[0.2em] rounded-3xl flex items-center justify-center gap-3 hover:bg-black dark:hover:bg-indigo-700 transition-all shadow-2xl hover:scale-105 active:scale-95 group">{t.endEncounter} <SkipForward size={24} className="group-hover:translate-x-1 transition-transform" /></button>
+                      <button onClick={startViva} className="w-full py-6 bg-medical-900 dark:bg-medical-600 text-white font-black uppercase tracking-[0.2em] rounded-3xl flex items-center justify-center gap-3 hover:bg-black dark:hover:bg-medical-700 transition-all shadow-2xl hover:scale-105 active:scale-95 group">{t.endEncounter} <SkipForward size={24} className="group-hover:translate-x-1 transition-transform" /></button>
                    </div>
                 </div>
              </div>
@@ -984,16 +1033,16 @@ export const App: React.FC = () => {
 
         {simulationState === SimulationState.VIVA && currentCase && (
           <div className="flex flex-col gap-8 animate-in fade-in slide-in-from-bottom-8">
-            <div className="bg-white dark:bg-slate-800 rounded-[3rem] shadow-2xl p-12 border border-slate-200 dark:border-slate-700">
+            <div className="bg-white dark:bg-dark-surface rounded-[3rem] shadow-2xl p-12 border border-medical-200 dark:border-medical-800">
                <div className="flex items-center justify-between mb-10 border-b border-slate-100 dark:border-slate-700 pb-8">
                  <div className="flex items-center gap-5">
-                   <div className="p-5 bg-indigo-600 rounded-[2rem] text-white shadow-xl"><MessageSquare size={36} /></div>
-                   <div><h2 className="text-4xl font-black text-slate-900 dark:text-white leading-tight">{t.clinicalViva}</h2><p className="text-indigo-600 dark:text-indigo-400 font-black uppercase tracking-widest text-xs">{t.knowledgeAssessment}</p></div>
+                   <div className="p-5 bg-medical-600 rounded-[2rem] text-white shadow-xl"><MessageSquare size={36} /></div>
+                   <div><h2 className="text-4xl font-black text-slate-900 dark:text-white leading-tight">{t.clinicalViva}</h2><p className="text-medical-600 dark:text-medical-400 font-black uppercase tracking-widest text-xs">{t.knowledgeAssessment}</p></div>
                  </div>
-                 <div className="bg-slate-900 dark:bg-slate-950 px-8 py-4 rounded-2xl text-white font-mono text-2xl font-bold flex items-center gap-4 shadow-xl shadow-slate-200 dark:shadow-none"><Clock size={22} className="text-indigo-400" /> {formatTime(timer)}</div>
+                 <div className="bg-medical-900 dark:bg-black px-8 py-4 rounded-2xl text-white font-mono text-2xl font-bold flex items-center gap-4 shadow-xl shadow-medical-200 dark:shadow-none"><Clock size={22} className="text-indigo-400" /> {formatTime(timer)}</div>
                </div>
                <div className="grid grid-cols-1 lg:grid-cols-5 gap-12">
-                  <div className="lg:col-span-2 flex flex-col bg-slate-900 rounded-[3rem] p-8 text-center shadow-inner relative overflow-hidden group min-h-[500px]">
+                  <div className="lg:col-span-2 flex flex-col bg-medical-900 rounded-[3rem] p-8 text-center shadow-inner relative overflow-hidden group min-h-[500px]">
                     <div className="absolute inset-0 bg-indigo-500/5 group-hover:bg-indigo-500/10 transition-colors" />
                     <div className="relative z-10 flex-shrink-0 mb-6">
                       <div className="p-8 bg-white/5 rounded-full border border-white/10 backdrop-blur-sm shadow-2xl mx-auto inline-flex">
@@ -1015,7 +1064,7 @@ export const App: React.FC = () => {
                             <div className="space-y-3 flex flex-col">
                                 {transcription.map((item) => (
                                     <div key={item.id} className={`flex w-full ${item.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                        <div className={`max-w-[90%] p-3 rounded-2xl shadow-sm text-sm ${item.role === 'user' ? 'bg-indigo-600 text-white rounded-br-md text-right' : 'bg-slate-700 text-white rounded-bl-md border border-slate-600 text-left'}`}>
+                                        <div className={`max-w-[90%] p-3 rounded-2xl shadow-sm text-sm ${item.role === 'user' ? 'bg-medical-600 text-white rounded-br-md text-right' : 'bg-slate-700 text-white rounded-bl-md border border-slate-600 text-left'}`}>
                                             <p className="font-medium">{item.text}</p>
                                             {item.englishTranslation && (
                                                 <p className="text-xs mt-2 pt-2 opacity-90 border-t border-white/20">{item.englishTranslation}</p>
@@ -1028,8 +1077,8 @@ export const App: React.FC = () => {
                     </div>
                   </div>
                   <div className="lg:col-span-3 space-y-8">
-                    <div className="bg-white dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 p-8 rounded-[2.5rem] shadow-sm flex-1">
-                      <h4 className="font-black uppercase tracking-widest text-[10px] text-indigo-600 dark:text-indigo-400 mb-8 flex items-center gap-2 border-b border-indigo-50 dark:border-slate-700 pb-3"><Target size={18} /> {t.examinationTopics}</h4>
+                    <div className="bg-white dark:bg-dark-bg/50 border border-medical-200 dark:border-medical-800 p-8 rounded-[2.5rem] shadow-sm flex-1">
+                      <h4 className="font-black uppercase tracking-widest text-[10px] text-medical-600 dark:text-medical-400 mb-8 flex items-center gap-2 border-b border-medical-50 dark:border-medical-800 pb-3"><Target size={18} /> {t.examinationTopics}</h4>
                       <ul className="space-y-5">
                         {currentCase.vivaQuestions.map((q, i) => (
                           <li key={i} className="text-xs font-bold text-slate-600 dark:text-slate-300 flex items-start gap-4 relaxed"><span className="shrink-0 w-8 h-8 bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 rounded-xl flex items-center justify-center font-black">0{i+1}</span> <span className="pt-1">{q}</span></li>
@@ -1044,7 +1093,7 @@ export const App: React.FC = () => {
         )}
 
         {simulationState === SimulationState.EVALUATING && (
-          <div className="max-w-md mx-auto text-center py-24 flex flex-col items-center"><Loader2 size={100} className="text-indigo-600 dark:text-indigo-400 animate-spin mb-10" /><h3 className="text-3xl font-black text-slate-900 dark:text-white tracking-tight">{t.generatingReports}</h3></div>
+          <div className="max-w-md mx-auto text-center py-24 flex flex-col items-center"><Loader2 size={100} className="text-medical-600 dark:text-medical-400 animate-spin mb-10" /><h3 className="text-3xl font-black text-slate-900 dark:text-white tracking-tight">{t.generatingReports}</h3></div>
         )}
 
         {simulationState === SimulationState.COMPLETE && evaluation && <EvaluationDisplay result={evaluation} onReset={() => setSimulationState(SimulationState.IDLE)} t={t} />}

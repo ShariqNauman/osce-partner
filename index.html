@@ -11,7 +11,24 @@
         darkMode: 'class',
         theme: {
           extend: {
-            colors: {}
+            colors: {
+              medical: {
+                50: '#F1F9FB',
+                100: '#E2F3F5',
+                200: '#C9ECEF',
+                300: '#A3DCE3',
+                400: '#72C4D1',
+                500: '#47A7B9',
+                600: '#075E7D', // Primary Dark Teal
+                700: '#0B5B7E',
+                800: '#0C4B68',
+                900: '#0B3E56',
+              },
+              dark: {
+                bg: '#021a24',
+                surface: '#042a38',
+              }
+            }
           }
         }
       }
@@ -24,6 +41,17 @@
       body {
         font-family: 'Inter', sans-serif;
         background-color: #f8fafc;
+        margin: 0;
+        overflow: hidden;
+      }
+      /* Hide scrollbar for Chrome, Safari and Opera */
+      ::-webkit-scrollbar {
+        display: none;
+      }
+      /* Hide scrollbar for IE, Edge and Firefox */
+      * {
+        -ms-overflow-style: none;  /* IE and Edge */
+        scrollbar-width: none;  /* Firefox */
       }
     </style>
     <script type="importmap">

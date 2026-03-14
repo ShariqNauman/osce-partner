@@ -13,6 +13,9 @@ const translations = {
     clinicalOsceSimulator: 'Clinical OSCE Simulator',
     idleDescription: 'Engage with standardized patients in real-time. Experience low-latency verbal feedback during physical exams.',
     startClinicalCase: 'Start Clinical Case',
+    selectCase: 'Select Case',
+    yellowJaundice: 'Yellow Jaundice',
+    cardiologyCase: 'Cardiology (Chest Pain)',
 
     // Generating
     preparingAssessment: 'Preparing Assessment...',
@@ -189,6 +192,9 @@ const translations = {
     clinicalOsceSimulator: 'เครื่องจำลอง OSCE ทางคลินิก',
     idleDescription: 'มีส่วนร่วมกับผู้ป่วยมาตรฐานแบบเรียลไทม์ สัมผัสประสบการณ์การตอบกลับด้วยเสียงที่รวดเร็วระหว่างการตรวจร่างกาย',
     startClinicalCase: 'เริ่มเคสทางคลินิก',
+    selectCase: 'เลือกเคส',
+    yellowJaundice: 'ภาวะตัวเหลืองตาเหลือง',
+    cardiologyCase: 'โรคหัวใจ (เจ็บหน้าอก)',
 
     // Generating
     preparingAssessment: 'กำลังเตรียมการประเมิน...',
