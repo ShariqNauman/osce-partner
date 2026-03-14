@@ -1,6 +1,7 @@
 
 import React from 'react';
 import { UserData } from '../types';
+import { Translations } from '../translations';
 import { TrendingUp, Calendar, Award, User, ChevronRight, BarChart3, Clock, ArrowLeft, Trash2, AlertCircle, RefreshCcw, EyeOff, BookOpen } from 'lucide-react';
 
 interface Props {
@@ -8,12 +9,13 @@ interface Props {
   onBack: () => void;
   onClear: () => void;
   onRestartCycle: () => void;
+  t: Translations;
 }
 
 // Spaced Repetition Sequence
 const REPETITION_SEQUENCE = [2, 3, 5, 7]; 
 
-const ProgressDashboard: React.FC<Props> = ({ userData, onBack, onClear, onRestartCycle }) => {
+const ProgressDashboard: React.FC<Props> = ({ userData, onBack, onClear, onRestartCycle, t }) => {
   const avgScore = userData.history.length > 0 
     ? Math.round(userData.history.reduce((acc, curr) => acc + curr.score, 0) / userData.history.length)
     : 0;
@@ -37,28 +39,28 @@ const ProgressDashboard: React.FC<Props> = ({ userData, onBack, onClear, onResta
               <User size={40} className="text-white" />
             </div>
             <div>
-              <p className="text-indigo-300 font-black uppercase tracking-[0.2em] text-[10px] mb-1">Student Profile</p>
+              <p className="text-indigo-300 font-black uppercase tracking-[0.2em] text-[10px] mb-1">{t.studentProfile}</p>
               <h2 className="text-3xl font-black">{userData.name}</h2>
-              <p className="text-slate-400 dark:text-slate-500 font-bold text-sm">{userData.history.length} Clinical Encounters Completed</p>
+              <p className="text-slate-400 dark:text-slate-500 font-bold text-sm">{userData.history.length} {t.encountersCompleted}</p>
             </div>
           </div>
           
           <div className="flex gap-4">
             <div className="bg-slate-800 p-4 rounded-2xl border border-slate-700 min-w-[120px]">
-              <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Avg. Proficiency</p>
+              <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">{t.avgProficiency}</p>
               <div className="text-3xl font-black font-mono flex items-baseline gap-1">
                 {avgScore}<span className="text-sm text-slate-500">%</span>
               </div>
             </div>
             <div className="bg-slate-800 p-4 rounded-2xl border border-slate-700 min-w-[120px]">
-              <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Repetition Status</p>
+              <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">{t.repetitionStatus}</p>
               <div className="text-lg font-black uppercase tracking-tight text-indigo-400 flex items-center gap-2">
                 {currentLevel === 5 ? (
-                  <span className="text-rose-400 flex items-center gap-2"><EyeOff size={16} /> Exhausted</span>
+                  <span className="text-rose-400 flex items-center gap-2"><EyeOff size={16} /> {t.exhausted}</span>
                 ) : (currentLevel >= 1 && currentLevel <= 4) ? (
-                  <><RefreshCcw size={16} /> Stage {currentLevel}</>
+                  <><RefreshCcw size={16} /> {t.stage} {currentLevel}</>
                 ) : (
-                  <><TrendingUp size={16} /> Healthy</>
+                  <><TrendingUp size={16} /> {t.healthy}</>
                 )}
               </div>
             </div>
@@ -68,14 +70,14 @@ const ProgressDashboard: React.FC<Props> = ({ userData, onBack, onClear, onResta
         <div className="p-8">
           <div className="flex items-center justify-between mb-6">
             <h3 className="text-xl font-black text-slate-900 dark:text-white flex items-center gap-2 uppercase tracking-tight">
-              <BarChart3 className="text-indigo-600 dark:text-indigo-400" size={20} /> Performance Log
+              <BarChart3 className="text-indigo-600 dark:text-indigo-400" size={20} /> {t.performanceLog}
             </h3>
             {userData.history.length > 0 && (
               <button 
                 onClick={onClear}
                 className="flex items-center gap-2 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
               >
-                <Trash2 size={12} /> Reset Data
+                <Trash2 size={12} /> {t.resetData}
               </button>
             )}
           </div>
@@ -84,7 +86,7 @@ const ProgressDashboard: React.FC<Props> = ({ userData, onBack, onClear, onResta
             {userData.history.length === 0 ? (
               <div className="text-center py-20 border-2 border-dashed border-slate-100 dark:border-slate-700 rounded-[2rem]">
                 <Calendar className="mx-auto text-slate-200 dark:text-slate-600 mb-4" size={48} />
-                <p className="text-slate-400 dark:text-slate-500 font-bold italic">No simulation history found. Start your first case to see analytics.</p>
+                <p className="text-slate-400 dark:text-slate-500 font-bold italic">{t.noSimulationHistory}</p>
               </div>
             ) : (
               [...userData.history].reverse().map((item, index) => {
@@ -121,25 +123,19 @@ const ProgressDashboard: React.FC<Props> = ({ userData, onBack, onClear, onResta
                         <div className="flex items-center gap-2">
                           {currentLevel === 5 ? <AlertCircle size={16} className="text-rose-500" /> : <RefreshCcw size={16} className="text-indigo-500" />}
                           <p className={`text-xs font-black uppercase tracking-tight ${currentLevel === 5 ? 'text-rose-600' : 'text-indigo-600'}`}>
-                            {currentLevel === 5 ? "Remediation Cycle Exhausted" : `Spaced Repetition Active: Stage ${currentLevel}`}
+                            {currentLevel === 5 ? t.remediationCycleExhausted : `${t.spacedRepetitionActive} ${currentLevel}`}
                           </p>
                         </div>
                         
                         {currentLevel === 5 ? (
                           <div className="flex flex-col gap-3">
                             <p className="text-xs font-bold text-slate-600 italic leading-relaxed">
-                              "Failed question more than 5 times. Revise clinical guidelines and get back to this question whenever you are ready."
+                              {t.failedMoreThan5}
                             </p>
-                            <button
-                              onClick={onRestartCycle}
-                              className="self-start flex items-center gap-2 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-all shadow-sm active:scale-95"
-                            >
-                              <RefreshCcw size={12} /> Restart Cycle
-                            </button>
                           </div>
                         ) : (
                           <p className="text-xs font-bold text-slate-600 italic">
-                            Next clinical refresher recommended in {currentWaitMinutes} minute(s).
+                            {t.nextRefresher} {currentWaitMinutes} {t.minutes}
                           </p>
                         )}
                       </div>
@@ -160,7 +156,7 @@ const ProgressDashboard: React.FC<Props> = ({ userData, onBack, onClear, onResta
           <div className="group-hover:-translate-x-1 transition-transform">
             <ArrowLeft size={20} />
           </div>
-          Back to Simulation
+          {t.backToSimulation}
         </button>
       </div>
     </div>
